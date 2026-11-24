@@ -1,0 +1,10 @@
+[Unit]
+Description=usrkrnl nach erfolgreichem Start zum Standard machen
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/usrkrnl-bestaetigen
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+NAME="UsrsideOS"
+PRETTY_NAME="UsrsideOS"
+ID=usrside
+ID_LIKE=arch
+BUILD_ID=rolling
+VARIANT="usrkrnl"
+ANSI_COLOR="38;2;0;238;255"
+HOME_URL="https://github.com/Lord3n20/usrsideos"
+DOCUMENTATION_URL="https://wiki.archlinux.org/"
+SUPPORT_URL="https://github.com/Lord3n20/usrsideos/issues"
+BUG_REPORT_URL="https://github.com/Lord3n20/usrsideos/issues"
+LOGO=usrside-logo

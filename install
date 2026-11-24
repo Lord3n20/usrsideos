@@ -1,0 +1,396 @@
+#!/usr/bin/env bash
+# UsrsideOS-Installer – im Arch-Linux-ISO als root starten:
+#
+#   iwctl                      # WLAN verbinden (station wlan0 connect NETZ)
+#   pacman -Sy --noconfirm git
+#   git clone https://github.com/Lord3n20/usrsideos && usrsideos/install
+#
+# Menü wie archinstall: Punkte einstellen, dann „Installieren“.
+# Vorinstalliert: yay, niri, kitty, ungoogled-chromium, hopd, iwd, usrkrnl.
+set -euo pipefail
+
+HIER=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+MNT=/mnt
+LOG=/tmp/usrsideos-install.log
+TITEL="UsrsideOS-Installer"
+USRKRNL_GIT=https://github.com/Lord3n20/usrkrnl
+
+# ---------------------------------------------------------------- Einstellungen (Vorgaben)
+DISK=""
+TASTATUR=de-latin1
+SPRACHE=de_DE.UTF-8
+ZEITZONE=Europe/Berlin
+RECHNER=usrside
+NUTZER=""
+PASSWORT=""
+AUTOLOGIN=1
+USRKRNL=1
+KERNEL_ARGS="quiet"
+EXTRA_REPO=()
+EXTRA_AUR=()
+# hopd
+H_STROM=0 H_LUEFTER=0 H_EGPU=0 H_AKKULOG=0 H_NIRI=0
+H_PL1_NETZ=45 H_PL2_NETZ=64 H_PL1_AKKU=12 H_PL2_AKKU=20
+H_HELL_AKKU=40 H_PANEL=eDP-1 H_MODUS_NETZ="" H_MODUS_AKKU="" H_NUR_E=0
+
+# Grundpakete: so wenig wie möglich, der Rest kommt über „Zusatzpakete“ oder von Hand.
+BASIS=(base linux linux-firmware btrfs-progs dosfstools sudo iwd niri kitty xwayland-satellite
+	xdg-desktop-portal-gnome noto-fonts base-devel git efibootmgr
+	dkms clang lld llvm bc pahole cpio perl openssl zstd)
+AUR_BASIS=(ungoogled-chromium-bin)
+
+# Zusatzpakete: "Paket[:aur]" "Beschreibung" an/aus
+ZUSATZ=(
+	"pipewire pipewire-pulse wireplumber" "Ton (PipeWire)" on
+	"waybar"            "Leiste oben (niri startet sie von selbst)" on
+	"fuzzel"            "Programmstarter (Mod+D)" on
+	"mako"              "Benachrichtigungen" on
+	"swaybg"            "Hintergrundbild" off
+	"swayidle hyprlock" "Sperrbildschirm + Ruhezustand" off
+	"bluez bluez-utils" "Bluetooth" off
+	"openssh"           "SSH" off
+	"wireguard-tools"   "WireGuard" off
+	"neovim"            "Editor" off
+	"btop"              "Prozessanzeige" off
+	"fastfetch"         "Systeminfo mit UsrsideOS-Logo" on
+	"mpv"               "Videoplayer" off
+	"imv"               "Bildbetrachter" off
+	"zathura zathura-pdf-mupdf" "PDF-Betrachter" off
+	"thunar"            "Dateimanager" off
+	"ttf-jetbrains-mono-nerd" "Schrift mit Symbolen (für waybar/Terminal)" off
+	"nvidia-open-dkms nvidia-utils" "NVIDIA-Treiber" off
+	"cups"              "Drucken" off
+)
+
+# ---------------------------------------------------------------- Hilfen
+FEHLER=/tmp/usrsideos-fehler
+# während der Installation gehört stdout der Fortschrittsanzeige: alles andere nur ins Protokoll
+log()  { printf '\n==> %s\n' "$*" >>"$LOG"; }
+stirb() { log "FEHLER: $*"; echo "$*" >"$FEHLER"; echo "FEHLER: $*" >&2; exit 1; }
+dlg()  { dialog --backtitle "$TITEL" "$@" 3>&1 1>&2 2>&3; }
+in_ziel() { arch-chroot "$MNT" "$@" >>"$LOG" 2>&1; }
+als_nutzer() { arch-chroot "$MNT" runuser -u "$NUTZER" -- bash -c "$1" >>"$LOG" 2>&1; }
+
+voraussetzungen() {
+	((EUID == 0)) || { echo "Bitte als root im Arch-ISO starten." >&2; exit 1; }
+	[[ -d /sys/firmware/efi/efivars ]] || { echo "Nur UEFI wird unterstützt (Rechner im UEFI-Modus starten)." >&2; exit 1; }
+	ping -c1 -W3 archlinux.org >/dev/null 2>&1 || { echo "Kein Internet. Erst mit iwctl verbinden." >&2; exit 1; }
+	command -v dialog >/dev/null || pacman -Sy --noconfirm dialog >/dev/null
+	command -v arch-chroot >/dev/null || pacman -Sy --noconfirm arch-install-scripts >/dev/null
+	command -v sgdisk >/dev/null || pacman -Sy --noconfirm gptfdisk >/dev/null
+	: >"$LOG"; rm -f "$FEHLER" /tmp/usrsideos-ohne-usrkrnl
+}
+
+# ---------------------------------------------------------------- Erkennung
+hat_akku()  { compgen -G '/sys/class/power_supply/BAT*' >/dev/null; }
+ist_tuxedo_gen9() { [[ $(cat /sys/class/dmi/id/board_name 2>/dev/null) == GXxMRXx ]]; }
+hat_thunderbolt() { [[ -n $(ls /sys/bus/thunderbolt/devices 2>/dev/null) ]]; }
+ist_intel() { grep -q GenuineIntel /proc/cpuinfo; }
+ist_hybrid() { [[ -d /sys/devices/cpu_atom ]]; }
+rapl_watt() {   # aktuelle Dauerleistung (PL1) in W, sonst leer
+	local f=/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw
+	[[ -r $f ]] && echo $(($(<"$f") / 1000000))
+}
+
+hopd_vorgaben() {
+	if hat_akku; then H_STROM=1 H_AKKULOG=1; fi
+	ist_tuxedo_gen9 && H_LUEFTER=1
+	ist_hybrid && H_NUR_E=1
+	local w; w=$(rapl_watt || true)
+	if [[ -n $w ]] && ((w > 5)); then
+		H_PL1_NETZ=$w H_PL2_NETZ=$((w * 13 / 10))
+		H_PL1_AKKU=$((w / 3 > 8 ? w / 3 : 8)); H_PL2_AKKU=$((H_PL1_AKKU + 8))
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------- Menüpunkte
+m_festplatte() {
+	local liste=() n g m
+	while read -r n g m; do liste+=("$n" "$g ${m:-}"); done < <(lsblk -dpno NAME,SIZE,MODEL -e 7,11)
+	((${#liste[@]})) || stirb "Keine Festplatte gefunden."
+	DISK=$(dlg --title "Festplatte" --menu "Ziel wählen. ALLE DATEN DARAUF WERDEN GELÖSCHT.\n\nAufteilung: 1 GiB EFI + Rest btrfs (@, @home).\nOhne Verschlüsselung: usrkrnl startet ohne initramfs." 18 72 8 "${liste[@]}") || true
+}
+m_tastatur() {
+	local k
+	k=$(dlg --inputbox "Tastaturbelegung (z. B. de-latin1, us, es):" 8 60 "$TASTATUR") && TASTATUR=$k
+	k=$(dlg --inputbox "Sprache (Locale, z. B. de_DE.UTF-8, es_MX.UTF-8, en_US.UTF-8):" 8 60 "$SPRACHE") && SPRACHE=$k
+	true
+}
+m_zeitzone() {
+	local z
+	z=$(dlg --inputbox "Zeitzone (z. B. Europe/Berlin, America/Mexico_City):" 8 60 "$ZEITZONE") || return 0
+	[[ -f /usr/share/zoneinfo/$z ]] && ZEITZONE=$z || dlg --msgbox "Unbekannte Zeitzone: $z" 6 50
+}
+m_rechner() { local r; r=$(dlg --inputbox "Rechnername:" 8 50 "$RECHNER") && [[ $r =~ ^[a-zA-Z0-9-]+$ ]] && RECHNER=$r; true; }
+m_nutzer() {
+	local n p1 p2
+	n=$(dlg --inputbox "Benutzername (klein, ohne Leerzeichen):" 8 50 "$NUTZER") || return 0
+	[[ $n =~ ^[a-z_][a-z0-9_-]*$ ]] || { dlg --msgbox "Ungültiger Name." 6 40; return 0; }
+	p1=$(dlg --insecure --passwordbox "Passwort für $n (gilt auch für sudo):" 8 50) || return 0
+	p2=$(dlg --insecure --passwordbox "Passwort wiederholen:" 8 50) || return 0
+	[[ -n $p1 && $p1 == "$p2" ]] || { dlg --msgbox "Passwörter leer oder ungleich." 6 40; return 0; }
+	NUTZER=$n PASSWORT=$p1
+}
+m_autologin() {
+	if dlg --yesno "Auf tty1 automatisch anmelden und niri starten?\n\n(Wie bei UsrsideOS gedacht: Rechner an → Desktop. Gesperrt wird mit hyprlock/swaylock, falls installiert.)" 10 64
+	then AUTOLOGIN=1; else AUTOLOGIN=0; fi
+}
+m_kernel() {
+	local a
+	if dlg --yesno "usrkrnl für diesen Rechner bauen? (empfohlen)\n\nMinimiert auf die Hardware, BORE, clang ThinLTO, ohne initramfs.\nDauert je nach CPU 10–40 Minuten. Der Arch-Kernel bleibt als Notfall-Eintrag." 11 70
+	then USRKRNL=1; else USRKRNL=0; fi
+	a=$(dlg --inputbox "Zusätzliche Kernel-Parameter (root= setzt der Installer selbst):" 8 70 "$KERNEL_ARGS") && KERNEL_ARGS=$a
+	true
+}
+m_zusatz() {
+	local auswahl i liste=() frei
+	for ((i = 0; i < ${#ZUSATZ[@]}; i += 3)); do liste+=("${ZUSATZ[i]}" "${ZUSATZ[i+1]}" "${ZUSATZ[i+2]}"); done
+	auswahl=$(dlg --separate-output --title "Zusatzpakete" --checklist "Leertaste = an/aus. Alles andere später mit pacman/yay." 24 78 16 "${liste[@]}") || return 0
+	# Auswahl in ZUSATZ merken
+	for ((i = 0; i < ${#ZUSATZ[@]}; i += 3)); do
+		if grep -qxF "${ZUSATZ[i]}" <<<"$auswahl"; then ZUSATZ[i+2]=on; else ZUSATZ[i+2]=off; fi
+	done
+	frei=$(dlg --inputbox "Weitere Pakete (Leerzeichen getrennt; AUR-Pakete mit aur: davor, z. B. aur:visual-studio-code-bin):" 9 78 "$(printf '%s ' "${EXTRA_REPO[@]}" "${EXTRA_AUR[@]/#/aur:}")") || return 0
+	EXTRA_REPO=() EXTRA_AUR=()
+	for p in $frei; do [[ $p == aur:* ]] && EXTRA_AUR+=("${p#aur:}") || EXTRA_REPO+=("$p"); done
+}
+m_hopd() {
+	local auswahl liste=() werte
+	hat_akku || dlg --msgbox "Kein Akku gefunden: Strom-Profile und Akku-Log sind vor allem für Laptops gedacht." 7 64
+	liste+=(strom "Netz/Akku-Profile (Leistung, Helligkeit, Stromsparen)" $( ((H_STROM)) && echo on || echo off))
+	liste+=(akkulog "Akku-Verbrauch mitschreiben (akku-log report)" $( ((H_AKKULOG)) && echo on || echo off))
+	ist_tuxedo_gen9 && liste+=(luefter "Lüfterkurven TUXEDO InfinityBook Pro Gen9" $( ((H_LUEFTER)) && echo on || echo off))
+	hat_thunderbolt && liste+=(egpu "Thunderbolt-eGPU wecken + Abrisse protokollieren" $( ((H_EGPU)) && echo on || echo off))
+	liste+=(niri "niri-Sitzung: Deckel, Bildwiederholrate, waybar, Sperren (braucht waybar, hyprlock, swayidle)" $( ((H_NIRI)) && echo on || echo off))
+	auswahl=$(dlg --separate-output --title "hopd – Teile" --checklist "hopd ist ein kleiner Daemon (C) für Strom, Lüfter und eGPU. Nur die gewählten Teile werden einkompiliert." 18 90 6 "${liste[@]}") || return 0
+	for t in strom akkulog luefter egpu niri; do
+		v=0; grep -qx "$t" <<<"$auswahl" && v=1
+		case $t in strom) H_STROM=$v ;; akkulog) H_AKKULOG=$v ;; luefter) H_LUEFTER=$v ;; egpu) H_EGPU=$v ;; niri) H_NIRI=$v ;; esac
+	done
+	((H_STROM || H_NIRI)) || return 0
+	werte=$(dlg --title "hopd – Werte" --form "Leistung in Watt (nur Intel, RAPL). Helligkeit -1 = nicht anfassen.\nModus z. B. 2560x1600@60, leer = nicht anfassen. Panel: niri-Name des eingebauten Bildschirms." 20 78 9 \
+		"Dauerleistung am Netz (PL1)" 1 1 "$H_PL1_NETZ" 1 34 6 4 \
+		"Spitze am Netz (PL2)"        2 1 "$H_PL2_NETZ" 2 34 6 4 \
+		"Dauerleistung auf Akku (PL1)" 3 1 "$H_PL1_AKKU" 3 34 6 4 \
+		"Spitze auf Akku (PL2)"       4 1 "$H_PL2_AKKU" 4 34 6 4 \
+		"Helligkeit auf Akku in %"    5 1 "$H_HELL_AKKU" 5 34 6 4 \
+		"Panel (niri-Ausgang)"        6 1 "$H_PANEL" 6 34 16 16 \
+		"Modus am Netz"               7 1 "$H_MODUS_NETZ" 7 34 20 24 \
+		"Modus auf Akku"              8 1 "$H_MODUS_AKKU" 8 34 20 24 \
+		"Auf Akku nur E-Kerne (0/1)"  9 1 "$H_NUR_E" 9 34 3 1) || return 0
+	mapfile -t w <<<"$werte"
+	H_PL1_NETZ=${w[0]//[^0-9]/} H_PL2_NETZ=${w[1]//[^0-9]/} H_PL1_AKKU=${w[2]//[^0-9]/} H_PL2_AKKU=${w[3]//[^0-9-]/}
+	H_HELL_AKKU=${w[4]//[^0-9-]/} H_PANEL=${w[5]//[^A-Za-z0-9-]/} H_MODUS_NETZ=${w[6]//[^0-9x@.]/} H_MODUS_AKKU=${w[7]//[^0-9x@.]/} H_NUR_E=${w[8]//[^01]/}
+}
+
+an_aus() { (($1)) && echo an || echo aus; }
+hauptmenue() {
+	local wahl hteile
+	while true; do
+		hteile=""
+		for t in STROM AKKULOG LUEFTER EGPU NIRI; do v=H_$t; ((${!v})) && hteile+="${t,,} "; done
+		wahl=$(dlg --title "$TITEL" --cancel-label "Abbrechen" --menu "Punkte einstellen, dann Installieren." 22 76 11 \
+			1 "Festplatte:       ${DISK:-(wählen)}" \
+			2 "Tastatur/Sprache: $TASTATUR, $SPRACHE" \
+			3 "Zeitzone:         $ZEITZONE" \
+			4 "Rechnername:      $RECHNER" \
+			5 "Benutzer:         ${NUTZER:-(anlegen)}" \
+			6 "Autologin + niri: $(an_aus $AUTOLOGIN)" \
+			7 "hopd:             ${hteile:-aus}" \
+			8 "Zusatzpakete" \
+			9 "usrkrnl bauen:    $(an_aus $USRKRNL)" \
+			I "Installieren" \
+			Q "Abbrechen") || exit 0
+		case $wahl in
+			1) m_festplatte ;; 2) m_tastatur ;; 3) m_zeitzone ;; 4) m_rechner ;; 5) m_nutzer ;;
+			6) m_autologin ;; 7) m_hopd ;; 8) m_zusatz ;; 9) m_kernel ;;
+			I) bereit && return 0 ;;
+			Q) exit 0 ;;
+		esac
+	done
+}
+bereit() {
+	[[ -n $DISK ]] || { dlg --msgbox "Erst eine Festplatte wählen." 6 40; return 1; }
+	[[ -n $NUTZER ]] || { dlg --msgbox "Erst einen Benutzer anlegen." 6 40; return 1; }
+	dlg --defaultno --yesno "Jetzt installieren?\n\n$DISK wird KOMPLETT GELÖSCHT." 9 50
+}
+
+# ---------------------------------------------------------------- Installation
+schritt() { echo "XXX"; echo "$1"; echo "$2"; echo "XXX"; }
+
+partitionieren() {
+	log "Partitionieren $DISK"
+	umount -R "$MNT" 2>/dev/null || true
+	wipefs -af "$DISK" >>"$LOG" 2>&1
+	sgdisk -Z "$DISK" >>"$LOG" 2>&1
+	sgdisk -n1:0:+1G -t1:ef00 -c1:EFI -n2:0:0 -t2:8300 -c2:UsrsideOS "$DISK" >>"$LOG" 2>&1
+	partprobe "$DISK" 2>/dev/null || true; udevadm settle
+	mapfile -t TEILE < <(lsblk -lnpo NAME,TYPE "$DISK" | awk '$2 == "part" { print $1 }')
+	ESP=${TEILE[0]} ROOT=${TEILE[1]}
+	mkfs.fat -F32 -n EFI "$ESP" >>"$LOG" 2>&1
+	mkfs.btrfs -f -L usrside "$ROOT" >>"$LOG" 2>&1
+	mount "$ROOT" "$MNT"
+	btrfs subvolume create "$MNT/@" "$MNT/@home" >>"$LOG"
+	umount "$MNT"
+	local o=noatime,compress=zstd:1
+	mount -o "$o,subvol=@" "$ROOT" "$MNT"
+	mount --mkdir -o "$o,subvol=@home" "$ROOT" "$MNT/home"
+	mount --mkdir -o fmask=0077,dmask=0077 "$ESP" "$MNT/boot"
+	PARTUUID=$(blkid -s PARTUUID -o value "$ROOT")
+}
+
+pakete() {
+	local ucode=() p i
+	grep -q GenuineIntel /proc/cpuinfo && ucode=(intel-ucode)
+	grep -q AuthenticAMD /proc/cpuinfo && ucode=(amd-ucode)
+	REPO=("${BASIS[@]}" "${ucode[@]}")
+	for ((i = 0; i < ${#ZUSATZ[@]}; i += 3)); do [[ ${ZUSATZ[i+2]} == on ]] && REPO+=(${ZUSATZ[i]}); done
+	REPO+=("${EXTRA_REPO[@]}")
+	log "pacstrap: ${REPO[*]}"
+	pacstrap -K "$MNT" "${REPO[@]}" >>"$LOG" 2>&1 || stirb "pacstrap fehlgeschlagen"
+	genfstab -U "$MNT" >>"$MNT/etc/fstab"
+}
+
+grundsystem() {
+	log "Grundsystem einrichten"
+	ln -sf "/usr/share/zoneinfo/$ZEITZONE" "$MNT/etc/localtime"
+	in_ziel hwclock --systohc
+	sed -i "s/^#\($SPRACHE \)/\1/; s/^#\(en_US.UTF-8 \)/\1/" "$MNT/etc/locale.gen"
+	in_ziel locale-gen
+	echo "LANG=$SPRACHE" >"$MNT/etc/locale.conf"
+	echo "KEYMAP=$TASTATUR" >"$MNT/etc/vconsole.conf"
+	echo "$RECHNER" >"$MNT/etc/hostname"
+	printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s\n' "$RECHNER" >>"$MNT/etc/hosts"
+	in_ziel useradd -m -G wheel,video,input -s /bin/bash "$NUTZER"
+	printf '%s:%s\n' "$NUTZER" "$PASSWORT" | arch-chroot "$MNT" chpasswd
+	in_ziel passwd -l root   # root ohne Passwort gesperrt, sudo über wheel
+	echo '%wheel ALL=(ALL:ALL) ALL' >"$MNT/etc/sudoers.d/10-wheel"
+	# nur während der Installation: makepkg/yay/usrkrnl ohne Passwort
+	echo "$NUTZER ALL=(ALL:ALL) NOPASSWD: ALL" >"$MNT/etc/sudoers.d/00-installer"
+	chmod 440 "$MNT"/etc/sudoers.d/*
+
+	# Netz: iwd macht DHCP selbst, DNS über systemd-resolved; WLAN aus dem ISO übernehmen
+	mkdir -p "$MNT/etc/iwd" "$MNT/var/lib/iwd"
+	printf '[General]\nEnableNetworkConfiguration=true\n\n[Network]\nNameResolvingService=systemd\n' >"$MNT/etc/iwd/main.conf"
+	cp -a /var/lib/iwd/. "$MNT/var/lib/iwd/" 2>/dev/null || true
+	in_ziel systemctl enable iwd systemd-resolved systemd-timesyncd
+	ln -sf ../run/systemd/resolve/stub-resolv.conf "$MNT/etc/resolv.conf"
+
+	# Name, Logo
+	install -Dm644 "$HIER/dateien/usrside-logo.svg" "$MNT/usr/share/icons/hicolor/scalable/apps/usrside-logo.svg"
+	install -Dm644 "$HIER/dateien/logo.txt" "$MNT/usr/share/usrsideos/logo.txt"
+	rm -f "$MNT/etc/os-release"
+	install -m644 "$HIER/dateien/os-release" "$MNT/etc/os-release"
+}
+
+desktop() {
+	log "niri einrichten"
+	local h=$MNT/home/$NUTZER
+	mkdir -p "$h/.config/niri"
+	sed 's/"alacritty"/"kitty"/g' "$MNT/usr/share/doc/niri/default-config.kdl" >"$h/.config/niri/config.kdl"
+	arch-chroot "$MNT" pacman -Q waybar >/dev/null 2>&1 || sed -i 's/^spawn-at-startup "waybar"/\/\/ spawn-at-startup "waybar"/' "$h/.config/niri/config.kdl"
+	if ((H_NIRI)); then
+		sed -i 's/^\/\/ *spawn-at-startup "waybar"/spawn-at-startup "waybar"/; s/^spawn-at-startup "waybar"/spawn-at-startup "hopd" "sitzung"/' "$h/.config/niri/config.kdl"
+	fi
+	if arch-chroot "$MNT" pacman -Q fastfetch >/dev/null 2>&1; then
+		mkdir -p "$h/.config/fastfetch"
+		printf '{\n  "logo": { "source": "/usr/share/usrsideos/logo.txt", "color": { "1": "96", "2": "36" } }\n}\n' >"$h/.config/fastfetch/config.jsonc"
+	fi
+	if ((AUTOLOGIN)); then
+		mkdir -p "$MNT/etc/systemd/system/getty@tty1.service.d"
+		printf '[Service]\nExecStart=\nExecStart=-/sbin/agetty --autologin %s --noclear %%I $TERM\n' "$NUTZER" \
+			>"$MNT/etc/systemd/system/getty@tty1.service.d/autologin.conf"
+		cat >>"$h/.bash_profile" <<'EOF'
+
+# UsrsideOS: auf tty1 direkt niri starten
+if [[ -z ${WAYLAND_DISPLAY:-} && $(tty) == /dev/tty1 ]]; then exec niri-session; fi
+EOF
+	fi
+	arch-chroot "$MNT" chown -R "$NUTZER:$NUTZER" "/home/$NUTZER"
+}
+
+aur() {
+	log "yay + AUR-Pakete"
+	als_nutzer 'cd /tmp && rm -rf yay-bin && git clone -q https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si --noconfirm' ||
+		stirb "yay ließ sich nicht bauen"
+	als_nutzer "yay -S --noconfirm --needed --removemake ${AUR_BASIS[*]} ${EXTRA_AUR[*]}" ||
+		stirb "AUR-Pakete fehlgeschlagen (${AUR_BASIS[*]} ${EXTRA_AUR[*]})"
+}
+
+hopd_bauen() {
+	((H_STROM || H_AKKULOG || H_LUEFTER || H_EGPU || H_NIRI)) || return 0
+	log "hopd bauen"
+	local b=$MNT/usr/local/src/hopd
+	mkdir -p "$b"; cp -r "$HIER/hopd/." "$b/"
+	cp "$b/patches.def.h" "$b/patches.h"
+	for t in STROM AKKULOG LUEFTER EGPU NIRI; do v=H_$t; sed -i "s/^#define PATCH_$t .*/#define PATCH_$t ${!v}/" "$b/patches.h"; done
+	local c=$b/config.h
+	cp "$b/config.def.h" "$c"
+	sed -i "s/^static const char nutzer\[\] = .*/static const char nutzer[] = \"$NUTZER\";/" "$c"
+	sed -i "s/^\(static const int   strom_pl1\[3\] *= \){[^}]*}/\1{ $H_PL1_NETZ, $H_PL1_AKKU, $H_PL1_NETZ }/" "$c"
+	sed -i "s/^\(static const int   strom_pl2\[3\] *= \){[^}]*}/\1{ $H_PL2_NETZ, $H_PL2_AKKU, $H_PL2_NETZ }/" "$c"
+	sed -i "s/^\(static const int   strom_hell\[3\] *= \){[^}]*}/\1{ -1, $H_HELL_AKKU, $H_HELL_AKKU }/" "$c"
+	sed -i "s/^\(static const int   strom_nur_e\[3\] *= \){[^}]*}/\1{ 0, $H_NUR_E, 0 }/" "$c"
+	sed -i "s/^\(static const char \*strom_modus\[3\] *= \){[^}]*}/\1{ \"$H_MODUS_NETZ\", \"$H_MODUS_AKKU\", \"$H_MODUS_AKKU\" }/" "$c"
+	sed -i "s/^\(static const char  strom_panel\[\] *= \)\"[^\"]*\"/\1\"$H_PANEL\"/; s/^\(static const char niri_panel\[\] = \)\"[^\"]*\"/\1\"$H_PANEL\"/" "$c"
+	in_ziel make -s -C /usr/local/src/hopd || stirb "hopd ließ sich nicht bauen"
+	in_ziel make -s -C /usr/local/src/hopd install PREFIX=/usr/local
+	install -Dm644 "$HIER/dateien/hopd.service" "$MNT/etc/systemd/system/hopd.service"
+	in_ziel systemctl enable hopd
+}
+
+kernel() {
+	log "Boot-Einträge"
+	local disk part order
+	disk=/dev/$(lsblk -no PKNAME "$ESP"); part=$(<"/sys/class/block/$(basename "$ESP")/partition")
+	# Notfall: Arch-Kernel mit initramfs, direkt per EFI-Stub
+	efibootmgr -q -c -d "$disk" -p "$part" -L "UsrsideOS (Arch-Kernel)" -l '\vmlinuz-linux' \
+		-u "root=PARTUUID=$PARTUUID rw rootflags=subvol=@ rootfstype=btrfs $KERNEL_ARGS initrd=\\initramfs-linux.img" >>"$LOG" 2>&1 ||
+		stirb "UEFI-Eintrag ließ sich nicht anlegen"
+	((USRKRNL)) || return 0
+
+	log "usrkrnl holen und bauen (dauert)"
+	als_nutzer "git clone -q --depth 1 $USRKRNL_GIT ~/usrkrnl" || stirb "usrkrnl ließ sich nicht holen"
+	# Basis = Config des ISO-Kernels, Module = was im ISO für diese Hardware geladen ist
+	zcat /proc/config.gz >"$MNT/home/$NUTZER/usrkrnl/usrkrnl/basis.config"
+	lsmod >"$MNT/home/$NUTZER/usrkrnl/usrkrnl/iso-lsmod"
+	arch-chroot "$MNT" chown -R "$NUTZER:$NUTZER" "/home/$NUTZER/usrkrnl"
+	if als_nutzer "cd ~/usrkrnl && usrkrnl/setup --base usrkrnl/basis.config --modules usrkrnl/iso-lsmod --cmdline '$KERNEL_ARGS' --label UsrsideOS --bootnext"; then
+		install -Dm755 "$HIER/dateien/usrkrnl-bestaetigen" "$MNT/usr/local/bin/usrkrnl-bestaetigen"
+		install -Dm644 "$HIER/dateien/usrkrnl-bestaetigen.service" "$MNT/etc/systemd/system/usrkrnl-bestaetigen.service"
+		in_ziel systemctl enable usrkrnl-bestaetigen
+	else
+		log "usrkrnl-Bau fehlgeschlagen"; touch /tmp/usrsideos-ohne-usrkrnl
+	fi
+}
+
+aufraeumen() {
+	rm -f "$MNT/etc/sudoers.d/00-installer"
+	cp "$LOG" "$MNT/var/log/usrsideos-install.log"
+	sync
+}
+
+installieren() {
+	(
+		schritt 5 "Festplatte vorbereiten …";   partitionieren
+		schritt 15 "Pakete installieren …";     pakete
+		schritt 45 "System einrichten …";       grundsystem
+		schritt 50 "niri einrichten …";         desktop
+		schritt 55 "yay und ungoogled-chromium …"; aur
+		schritt 70 "hopd bauen …";              hopd_bauen
+		schritt 75 "usrkrnl bauen (10–40 min) …"; kernel
+		schritt 98 "Aufräumen …";               aufraeumen
+		schritt 100 "Fertig."
+	) | dialog --backtitle "$TITEL" --title "Installation" --gauge "Los geht's …" 9 70 0
+	if [[ ${PIPESTATUS[0]} != 0 ]]; then
+		dlg --title "Fehler" --msgbox "Installation abgebrochen:\n$(cat "$FEHLER" 2>/dev/null)\n\nProtokoll: $LOG" 12 70; exit 1
+	fi
+	[[ -e /tmp/usrsideos-ohne-usrkrnl ]] && dlg --msgbox "usrkrnl ließ sich nicht bauen – UsrsideOS startet mit dem Arch-Kernel.\nSpäter erneut: cd ~/usrkrnl && usrkrnl/setup\n\nProtokoll: /var/log/usrsideos-install.log" 10 70
+	dlg --msgbox "UsrsideOS ist installiert.\n\nUSB-Stick abziehen und neu starten (reboot).\nDer erste Start nimmt usrkrnl; klappt er, wird usrkrnl Standard.\nSonst startet beim nächsten Mal der Arch-Kernel." 12 66
+}
+
+voraussetzungen
+hopd_vorgaben
+hauptmenue
+installieren

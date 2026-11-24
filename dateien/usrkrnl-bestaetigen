@@ -1,0 +1,11 @@
+#!/bin/bash
+# Läuft einmal nach dem ersten erfolgreichen Start mit usrkrnl und macht ihn zum Standard.
+# Startet der Rechner mit dem Arch-Kernel (usrkrnl kaputt), bleibt alles wie es ist.
+set -eu
+[[ $(uname -r) == *-usr ]] || exit 0
+neu=$(efibootmgr | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | head -n1)
+[[ -n $neu ]] || exit 0
+alt=$(efibootmgr | awk '/^BootOrder/ { print $2 }' | tr ',' '\n' | grep -vix "$neu" | paste -sd,)
+efibootmgr -q -o "$neu${alt:+,$alt}"
+systemctl disable usrkrnl-bestaetigen.service
+echo "usrkrnl ist jetzt Standard (Boot$neu)."
