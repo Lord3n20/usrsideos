@@ -388,7 +388,8 @@ base_system() {
 	grep -q "127.0.1.1" "$MNT/etc/hosts" 2>/dev/null ||
 		printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s\n' "$HOSTNAME_" >>"$MNT/etc/hosts"
 	local groups g
-	groups=$(for g in wheel video input audio; do os_chroot getent group "$g" >/dev/null && echo "$g"; done | paste -sd,)
+	# pipefail: the loop must not end with the status of a missing last group
+	groups=$(for g in wheel video input audio; do if os_chroot getent group "$g" >/dev/null; then echo "$g"; fi; done | paste -sd,)
 	in_target useradd -m -G "$groups" -s /bin/bash "$USERNAME" || die "user could not be created"
 	printf '%s:%s\n' "$USERNAME" "$PASSWORD" | os_chroot chpasswd
 	in_target passwd -l root   # root locked without password, sudo via wheel
@@ -518,7 +519,8 @@ kernel() {
 	mkdir -p "$cfg"
 	if [[ -r /proc/config.gz ]]; then zcat /proc/config.gz >"$cfg/base.config"
 	else
-		local c; c=$(ls -t "$MNT"/boot/config-* "$MNT"/usr/src/linux/.config 2>/dev/null | head -n1)
+		# ls fails for the path that does not exist; with pipefail that would end the installation
+		local c; c=$(ls -t "$MNT"/boot/config-* "$MNT"/usr/src/linux/.config 2>/dev/null | head -n1 || true)
 		[[ -n $c ]] || die "no kernel config found as base for usrkrnl"
 		cp "$c" "$cfg/base.config"
 	fi
