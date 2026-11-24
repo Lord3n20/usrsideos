@@ -12,7 +12,8 @@
 # Unattended (tests): install --answers FILE. FILE is a bash snippet that sets DISK, USERNAME,
 # PASSWORD and optionally any other setting below (e.g. USRKRNL=0); the disk is erased without asking.
 # TEST_SSH_KEY="ssh-ed25519 …" (answers only) additionally installs and enables sshd with that key
-# for root and the user, for automated tests in a VM.
+# for root and the user, for automated tests in a VM. TEST_CACHEDIR=DIR (answers only, Arch) adds a
+# read-only package cache (e.g. the host cache in the VM) for faster test runs.
 #
 # Backend contract (os/*.sh): OS_NAME OS_KERNEL_NAME FREE_HINT COMMUNITY SESSION_CMD IWD_DNS SSH_PKG
 # BASE UCODE_INTEL UCODE_AMD EXTRAS, functions os_live_tools os_chroot os_bootstrap os_locale
@@ -50,6 +51,8 @@ KERNEL_ARGS="quiet"
 EXTRA_REPO=()
 EXTRA_AUR=()
 TEST_SSH_KEY=""
+# shellcheck disable=SC2034  # used by os/arch.sh
+TEST_CACHEDIR=""
 # hopd (values go into its config.h)
 H_STROM=0 H_LUEFTER=0 H_EGPU=0 H_AKKULOG=0 H_NIRI=0
 H_PL1_AC=45 H_PL2_AC=64 H_PL1_BAT=12 H_PL2_BAT=20

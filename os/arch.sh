@@ -49,14 +49,17 @@ os_bootstrap() {
 	log "pacstrap: ${REPO[*]}"
 	# slow mirrors / weak Wi-Fi: refresh the mirror list once and retry (downloaded packages stay
 	# in the target cache, so the second run only fetches what is missing)
-	if ! pacstrap -K "$MNT" "${REPO[@]}" >>"$LOG" 2>&1; then
+	# tests: an extra read-only cache; pacman downloads into the first writable --cachedir
+	local cache=()
+	[[ -n $TEST_CACHEDIR ]] && cache=(--cachedir="$MNT/var/cache/pacman/pkg" --cachedir="$TEST_CACHEDIR")
+	if ! pacstrap -K "$MNT" "${REPO[@]}" "${cache[@]}" >>"$LOG" 2>&1; then
 		log "pacstrap failed, refreshing mirrors and retrying once"
 		if command -v reflector >/dev/null; then
 			reflector --protocol https --latest 20 --sort rate --download-timeout 5 \
 				--save /etc/pacman.d/mirrorlist >>"$LOG" 2>&1 || log "reflector failed, keeping the mirror list"
 		fi
 		pacman -Syy >>"$LOG" 2>&1 || true
-		pacstrap -K "$MNT" "${REPO[@]}" >>"$LOG" 2>&1 || die "pacstrap failed twice (network/mirrors? see $LOG)"
+		pacstrap -K "$MNT" "${REPO[@]}" "${cache[@]}" >>"$LOG" 2>&1 || die "pacstrap failed twice (network/mirrors? see $LOG)"
 	fi
 }
 
