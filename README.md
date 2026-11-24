@@ -1,7 +1,7 @@
 # UsrsideOS
 
-A very small Arch Linux system with its own kernel ([usrkrnl](usrkrnl/)) that is
-tailored to the machine during installation.
+A very small vibe-coded Linux system with its own linux-kernel that is
+tailored to the machine during installation. It got made by vibe-coding a lot of improvements for gaming and laptop usage on Arch Linux and getting those to work on other Distros as well.
 
 **Preinstalled:** yay · niri · kitty · ungoogled-chromium · hopd · iwd · usrkrnl.
 Everything else is picked in the installer (like archinstall) or installed later with `pacman`/`yay`.
