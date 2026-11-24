@@ -40,7 +40,10 @@ EXTRAS=(
 )
 
 os_live_tools() {
-	xbps-install -Syu xbps >/dev/null 2>&1 || true
+	# an older live ISO refuses every transaction until xbps itself is updated
+	log "live ISO: updating xbps"
+	xbps-install -Syu xbps >>"$LOG" 2>&1 || true   # rc is not reliable for "already up to date"
+	xbps-install -un xbps 2>/dev/null | grep -q '^xbps-' && die "could not update xbps on the live ISO (network? see $LOG)"
 	local need=()
 	command -v dialog >/dev/null || need+=(dialog)
 	command -v mkfs.btrfs >/dev/null || need+=(btrfs-progs)
@@ -77,8 +80,14 @@ os_enable() { local s; for s; do ln -sfn "/etc/sv/$s" "$MNT/etc/runit/runsvdir/d
 os_services() { os_enable dbus elogind iwd chronyd; }
 
 os_autologin() {
-	cp -a "$MNT/etc/sv/agetty-tty1" "$MNT/etc/sv/agetty-autologin-tty1"
-	sed -i "s/^GETTY_ARGS=.*/GETTY_ARGS=\"--autologin $USERNAME --noclear\"/" "$MNT/etc/sv/agetty-autologin-tty1/conf"
+	# new service dir (agetty-generic/run takes the tty from the dir name); the stock conf sets
+	# GETTY_ARGS indented inside an if, so write our own instead of editing it
+	local d=$MNT/etc/sv/agetty-autologin-tty1
+	mkdir -p "$d"
+	ln -sfn ../agetty-generic/run "$d/run"
+	ln -sfn ../agetty-generic/finish "$d/finish"
+	ln -sfn /run/runit/supervise.agetty-autologin-tty1 "$d/supervise"
+	printf 'GETTY_ARGS="--autologin %s --noclear"\nBAUD_RATE=38400\nTERM_NAME=linux\n' "$USERNAME" >"$d/conf"
 	rm -f "$MNT/etc/runit/runsvdir/default/agetty-tty1"
 	os_enable agetty-autologin-tty1
 }
@@ -87,8 +96,11 @@ os_autologin() {
 os_sound() {
 	[[ -x $MNT/usr/bin/pipewire ]] || return 0
 	mkdir -p "$MNT/etc/pipewire/pipewire.conf.d"
-	ln -sf /usr/share/examples/wireplumber/10-wireplumber.conf "$MNT/etc/pipewire/pipewire.conf.d/"
-	ln -sf /usr/share/examples/pipewire/20-pipewire-pulse.conf "$MNT/etc/pipewire/pipewire.conf.d/"
+	local f   # paths checked against pipewire-1.6.10_1 / wireplumber-0.5.18_1 (Void handbook layout)
+	for f in wireplumber/10-wireplumber.conf pipewire/20-pipewire-pulse.conf; do
+		[[ -f $MNT/usr/share/examples/$f ]] || die "missing /usr/share/examples/$f in the target"
+		ln -sf "/usr/share/examples/$f" "$MNT/etc/pipewire/pipewire.conf.d/"
+	done
 	echo 'spawn-at-startup "pipewire"' >>"$1"
 }
 
