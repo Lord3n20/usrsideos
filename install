@@ -82,7 +82,12 @@ chroot_mount() {
 		mkdir -p "$MNT/$d"; mount --rbind "/$d" "$MNT/$d"; mount --make-rslave "$MNT/$d"
 	done
 	mountpoint -q "$MNT/proc" || { mkdir -p "$MNT/proc"; mount -t proc proc "$MNT/proc"; }
-	mountpoint -q "$MNT/run" || { mkdir -p "$MNT/run"; mount -t tmpfs tmpfs "$MNT/run"; }
+	if ! mountpoint -q "$MNT/run"; then
+		mkdir -p "$MNT/run"; mount -t tmpfs tmpfs "$MNT/run"
+		# udev database of the live system: dracut hostonly (Void, Gentoo) asks udev about the root
+		# device and its drivers; arch-chroot binds all of /run for the same reason
+		if [[ -d /run/udev ]]; then mkdir -p "$MNT/run/udev"; mount --bind /run/udev "$MNT/run/udev"; fi
+	fi
 	rm -f "$MNT/etc/resolv.conf"; cp -L /etc/resolv.conf "$MNT/etc/resolv.conf"
 }
 chroot_run() {
