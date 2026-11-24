@@ -167,8 +167,10 @@ os_sound() {
 os_community() { :; }   # overlays are set up in os_bootstrap
 
 # installkernel names kernels /boot/vmlinuz-VERSION; keep a fixed-name copy for the UEFI fallback entry
+# Called twice: from os_bootstrap before the kernel is emerged (only installs the hook) and from
+# kernel() (checks the copies, reruns installkernel if the hook did not run).
 os_kernel_hook() {
-	[[ -f $MNT/etc/kernel/postinst.d/95-usrside.install ]] && return 0
+	[[ -f $MNT/etc/kernel/postinst.d/95-usrside.install ]] ||
 	install -Dm755 /dev/stdin "$MNT/etc/kernel/postinst.d/95-usrside.install" <<'EOF'
 #!/bin/sh
 # UsrsideOS: fixed-name copy of the newest kernel for the UEFI entry "UsrsideOS (gentoo kernel)"
@@ -178,8 +180,10 @@ cp -f "$2" "$d/vmlinuz-gentoo"
 [ -f "$d/initramfs-$1.img" ] && cp -f "$d/initramfs-$1.img" "$d/initramfs-gentoo.img"
 exit 0
 EOF
-	[[ -d $MNT/var/db/pkg/sys-kernel ]] || return 0   # first call: kernel not emerged yet
-	[[ -f $MNT/boot/vmlinuz-gentoo ]] || in_target emerge --config sys-kernel/gentoo-kernel-bin
+	# first call: kernel not emerged yet (var/db/pkg/sys-kernel alone says nothing, the stage3 has linux-headers)
+	compgen -G "$MNT/var/db/pkg/sys-kernel/gentoo-kernel-bin-*" >/dev/null || return 0
+	[[ -f $MNT/boot/vmlinuz-gentoo && -f $MNT/boot/initramfs-gentoo.img ]] ||
+		in_target emerge --config sys-kernel/gentoo-kernel-bin || die "emerge --config gentoo-kernel-bin failed"
 	[[ -f $MNT/boot/vmlinuz-gentoo && -f $MNT/boot/initramfs-gentoo.img ]] || die "kernel/initramfs missing in /boot"
 }
 
