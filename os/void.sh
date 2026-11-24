@@ -57,8 +57,12 @@ os_bootstrap() {
 	log "xbps-install: ${REPO[*]}"
 	mkdir -p "$MNT/var/db/xbps/keys"
 	cp /var/db/xbps/keys/* "$MNT/var/db/xbps/keys/"
-	XBPS_ARCH=x86_64 xbps-install -Sy -r "$MNT" -R "$VOID_REPO" -R "$VOID_REPO/nonfree" "${REPO[@]}" >>"$LOG" 2>&1 ||
-		die "xbps-install failed"
+	local i
+	for i in 1 2; do   # one retry for slow mirrors / weak Wi-Fi; finished downloads stay in the cache
+		XBPS_ARCH=x86_64 xbps-install -Sy -r "$MNT" -R "$VOID_REPO" -R "$VOID_REPO/nonfree" "${REPO[@]}" >>"$LOG" 2>&1 && break
+		((i == 2)) && die "xbps-install failed twice (network/mirror? see $LOG)"
+		log "xbps-install failed, retrying once"
+	done
 	chroot_mount
 }
 
