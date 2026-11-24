@@ -370,8 +370,9 @@ desktop() {
 		os_autologin
 		cat >>"$h/.bash_profile" <<EOF
 
-# UsrsideOS: start niri right away on tty1
-if [[ -z \${WAYLAND_DISPLAY:-} && \$(tty) == /dev/tty1 ]]; then $SESSION_CMD; fi
+# UsrsideOS: start niri right away on tty1. Only from the interactive login shell: niri-session
+# re-executes itself through "\$SHELL -l -c", which reads this file again and would loop forever.
+if [[ \$- == *i* && -z \${WAYLAND_DISPLAY:-} && \$(tty) == /dev/tty1 ]]; then $SESSION_CMD; fi
 EOF
 	fi
 	os_chroot chown -R "$USERNAME:$USERNAME" "/home/$USERNAME"
