@@ -134,7 +134,9 @@ cp -f "/boot/vmlinuz-$2" /boot/vmlinuz-void
 exit 0
 EOF
 	local k
-	k=$(chroot "$MNT" xbps-query -l | awk '{ print $2 }' | grep -E '^linux[0-9]+\.[0-9]+-' | sed 's/-[^-]*$//' | tail -n1)
+	# the series package (linux6.18) is a dependency of the "linux" meta package; listing all
+	# installed linux* packages would also find linux6.18-headers (pulled in by dkms)
+	k=$(chroot "$MNT" xbps-query -x linux | sed -nE 's/^(linux[0-9]+\.[0-9]+)[<>=].*/\1/p' | head -n1)
 	[[ -n $k ]] || die "no Void kernel package found"
 	in_target xbps-reconfigure -f "$k" || die "xbps-reconfigure $k failed"
 	[[ -f $MNT/boot/vmlinuz-void && -f $MNT/boot/initramfs-void.img ]] || die "kernel/initramfs missing in /boot"

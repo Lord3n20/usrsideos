@@ -433,16 +433,17 @@ desktop() {
 	local h=$MNT/home/$USERNAME c src
 	c=$h/.config/niri/config.kdl
 	mkdir -p "${c%/*}"
-	src=$(find "$MNT/usr/share/doc" -name 'default-config.kdl*' 2>/dev/null | head -n1)
+	# Arch: /usr/share/doc/niri, Void: /usr/share/examples/niri
+	src=$(find "$MNT/usr/share/doc" "$MNT/usr/share/examples" -name 'default-config.kdl*' 2>/dev/null | head -n1)
 	case $src in
 		*.bz2) bzip2 -dc "$src" ;;
 		*.gz) gzip -dc "$src" ;;
 		*.zst) zstd -qdc "$src" ;;
-		"") curl -fsSL https://raw.githubusercontent.com/YaLTeR/niri/main/resources/default-config.kdl 2>/dev/null ||
-			wget -qO- https://raw.githubusercontent.com/YaLTeR/niri/main/resources/default-config.kdl 2>/dev/null || true ;;
+		# curl from the target: not every live ISO has curl or wget (Void has neither)
+		"") os_chroot curl -fsSL https://raw.githubusercontent.com/YaLTeR/niri/main/resources/default-config.kdl 2>/dev/null || true ;;
 		*) cat "$src" ;;
 	esac | sed 's/"alacritty"/"kitty"/g' >"$c"
-	[[ -s $c ]] || rm -f "$c"   # niri writes its own default config on first start
+	[[ -s $c ]] || { rm -f "$c"; warn "niri: no default config found, niri writes its own on first start (without the UsrsideOS changes: waybar/hopd/PipeWire autostart)"; }
 	if [[ -f $c ]]; then
 		[[ -x $MNT/usr/bin/waybar ]] || sed -i 's/^spawn-at-startup "waybar"/\/\/ spawn-at-startup "waybar"/' "$c"
 		if ((H_NIRI)); then

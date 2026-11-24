@@ -82,9 +82,10 @@ done
 
 [[ $(uname -m) == x86_64 ]] || die "usrkrnl/setup only supports x86_64"
 ((EUID != 0)) || die "run as a normal user, sudo/doas is used where needed"
-DISTRO=$(. /etc/os-release 2>/dev/null; echo "${ID:-unknown}")
+# an installed UsrsideOS says ID=usrside, its base system is in ID_LIKE (arch, void or gentoo)
+DISTRO=$(. /etc/os-release 2>/dev/null; if [[ ${ID:-} == usrside ]]; then echo "${ID_LIKE:-arch}"; else echo "${ID:-unknown}"; fi)
 case $DISTRO in
-	arch|usrside) HINT="pacman -S clang lld llvm base-devel bc pahole cpio perl openssl zstd curl efibootmgr" ;;
+	arch) HINT="pacman -S clang lld llvm base-devel bc pahole cpio perl openssl zstd curl efibootmgr" ;;
 	void) HINT="xbps-install clang lld llvm base-devel bc flex bison pahole cpio perl openssl-devel elfutils-devel zstd curl efibootmgr" ;;
 	gentoo) HINT="emerge llvm-core/clang llvm-core/lld sys-devel/bc dev-util/pahole app-arch/cpio net-misc/curl sys-boot/efibootmgr" ;;
 	*) HINT="install clang, lld, llvm, make, bc, flex, bison, perl, pahole, openssl and libelf headers, zstd, curl, efibootmgr" ;;
