@@ -27,7 +27,7 @@ Set disk, user etc. in the menu, then **Install**. The disk is erased completely
 | Extra packages | sound, waybar, fuzzel, mako, lock screen, Bluetooth, NVIDIA … or your own packages (prefix `aur:` = AUR) |
 | Build usrkrnl | kernel with only this machine's drivers, BORE, clang ThinLTO, no initramfs (10–40 min) |
 
-`fastfetch` shows the UsrsideOS logo; the small one: `fastfetch --logo /usr/share/usrsideos/logo-small.txt --logo-color-1 37 --logo-color-2 96`.
+`fastfetch` shows the small UsrsideOS logo; the big one: `fastfetch --logo /usr/share/usrsideos/logo.txt --logo-color-1 37 --logo-color-2 96`.
 
 The installer keeps a copy of this repository in `~/usrsideos` for later rebuilds.
 

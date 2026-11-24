@@ -298,7 +298,7 @@ desktop() {
 	fi
 	if arch-chroot "$MNT" pacman -Q fastfetch >/dev/null 2>&1; then
 		mkdir -p "$h/.config/fastfetch"
-		printf '{\n  "logo": { "source": "/usr/share/usrsideos/logo.txt", "color": { "1": "37", "2": "96" } }\n}\n' >"$h/.config/fastfetch/config.jsonc"
+		printf '{\n  "logo": { "source": "/usr/share/usrsideos/logo-small.txt", "color": { "1": "37", "2": "96" } }\n}\n' >"$h/.config/fastfetch/config.jsonc"
 	fi
 	if ((AUTOLOGIN)); then
 		mkdir -p "$MNT/etc/systemd/system/getty@tty1.service.d"
