@@ -1,0 +1,11 @@
+#!/sbin/openrc-run
+# OpenRC service for hopd (Gentoo)
+description="hopd – power, fans, eGPU, battery log"
+command=/usr/local/bin/hopd
+command_args="dienst"
+supervisor=supervise-daemon
+respawn_delay=10
+
+depend() {
+	after modules
+}

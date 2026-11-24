@@ -11,7 +11,8 @@
 # source is downloaded from kernel.org, checked and patched on the first run
 # and kept in $SRC (default ~/.local/src/usrkrnl/linux-KVER).
 #
-# Run it as a normal user; sudo is used only for the install steps.
+# Works on any distribution (package hints for Arch, Void and Gentoo).
+# Run it as a normal user; sudo or doas is used only for the install steps.
 set -euo pipefail
 
 KVER=7.3.5
@@ -78,10 +79,20 @@ while (($#)); do
 done
 
 [[ $(uname -m) == x86_64 ]] || die "usrkrnl/setup only supports x86_64"
-((EUID != 0)) || die "run as a normal user, sudo is used where needed"
+((EUID != 0)) || die "run as a normal user, sudo/doas is used where needed"
+DISTRO=$(. /etc/os-release 2>/dev/null; echo "${ID:-unknown}")
+case $DISTRO in
+	arch|usrside) HINT="pacman -S clang lld llvm base-devel bc pahole cpio perl openssl zstd curl efibootmgr" ;;
+	void) HINT="xbps-install clang lld llvm base-devel bc flex bison pahole cpio perl openssl-devel elfutils-devel zstd curl efibootmgr" ;;
+	gentoo) HINT="emerge llvm-core/clang llvm-core/lld sys-devel/bc dev-util/pahole app-arch/cpio net-misc/curl sys-boot/efibootmgr" ;;
+	*) HINT="install clang, lld, llvm, make, bc, flex, bison, perl, pahole, openssl and libelf headers, zstd, curl, efibootmgr" ;;
+esac
 for t in clang ld.lld llvm-ar make bc flex bison perl pahole openssl zstd findmnt blkid lsblk modinfo curl patch tar xz; do
-	command -v "$t" >/dev/null || die "missing tool: $t (Arch: pacman -S clang lld llvm base-devel bc pahole cpio perl openssl zstd curl)"
+	command -v "$t" >/dev/null || die "missing tool: $t ($HINT)"
 done
+if command -v sudo >/dev/null; then SUDO=sudo
+elif command -v doas >/dev/null; then SUDO=doas
+else die "neither sudo nor doas found"; fi
 
 # ---------------------------------------------------------------- 0. source
 if [[ -z $TREE ]]; then
@@ -118,7 +129,8 @@ mkdir -p "$WORK"
 
 # ---------------------------------------------------------------- 1. base config
 if [[ -z $BASE ]]; then
-	for c in /proc/config.gz "/boot/config-$(uname -r)" "/lib/modules/$(uname -r)/build/.config"; do
+	for c in /proc/config.gz "/boot/config-$(uname -r)" "/lib/modules/$(uname -r)/config" \
+		"/lib/modules/$(uname -r)/build/.config" /usr/src/linux/.config; do
 		[[ -r $c ]] && { BASE=$c; break; }
 	done
 	[[ -n $BASE ]] || die "config of the running kernel not found, use --base FILE"
@@ -231,7 +243,7 @@ rtype=$(lsblk -dno TYPE "$rootdev")
 [[ $rtype == part ]] ||
 	die "root is on a '$rtype' device (LUKS, LVM, RAID ...). That needs an initramfs, which usrkrnl does not use."
 partuuid=$(lsblk -dno PARTUUID "$rootdev")
-[[ -n $partuuid ]] || partuuid=$(sudo blkid -s PARTUUID -o value "$rootdev")
+[[ -n $partuuid ]] || partuuid=$($SUDO blkid -s PARTUUID -o value "$rootdev")
 [[ -n $partuuid ]] || die "no PARTUUID for $rootdev (GPT partition table needed)"
 msg "Root: $rootdev ($fstype), PARTUUID=$partuuid"
 
@@ -277,8 +289,10 @@ esac
 FW=$WORK/firmware
 rm -rf "$FW"
 fwsrc=""
-for ext in "" .zst .xz; do
-	[[ -n $ucode && -r /usr/lib/firmware/$ucode$ext ]] && { fwsrc=/usr/lib/firmware/$ucode$ext; break; }
+for dir in /usr/lib/firmware /lib/firmware; do
+	for ext in "" .zst .xz; do
+		[[ -n $ucode && -r $dir/$ucode$ext ]] && { fwsrc=$dir/$ucode$ext; break 2; }
+	done
 done
 if [[ -n $fwsrc ]]; then
 	mkdir -p "$FW/${ucode%/*}"
@@ -291,7 +305,7 @@ if [[ -n $fwsrc ]]; then
 	msg "Microcode embedded: $ucode"
 else
 	kconf --set-str EXTRA_FIRMWARE ""
-	warn "no microcode file found for this CPU (Arch: intel-ucode / linux-firmware-amd), building without"
+	warn "no microcode file found for this CPU (package intel-ucode / intel-microcode / linux-firmware), building without"
 fi
 
 # ---------------------------------------------------------------- 6. command line
@@ -358,11 +372,16 @@ msg "Build finished: arch/x86/boot/bzImage"
 
 # ---------------------------------------------------------------- 10. install
 msg "Installing modules to /lib/modules/$KREL"
-sudo make "${MKARGS[@]}" -s modules_install INSTALL_MOD_STRIP=1
-sudo ln -sfn "$TREE" "/lib/modules/$KREL/build"
+$SUDO make "${MKARGS[@]}" -s modules_install INSTALL_MOD_STRIP=1
+$SUDO ln -sfn "$TREE" "/lib/modules/$KREL/build"
 if command -v dkms >/dev/null; then
 	msg "Building DKMS modules"
-	sudo dkms autoinstall -k "$KREL" || warn "DKMS failed, check 'dkms status'"
+	$SUDO dkms autoinstall -k "$KREL" || warn "DKMS failed, check 'dkms status'"
+fi
+if [[ $DISTRO == gentoo ]] && command -v emerge >/dev/null; then
+	msg "Rebuilding out-of-tree modules (emerge @module-rebuild)"
+	$SUDO env KERNEL_DIR="$TREE" KV_OUT_DIR="$TREE" emerge --oneshot --quiet @module-rebuild ||
+		warn "@module-rebuild failed"
 fi
 
 ESP=$(bootctl --print-esp-path 2>/dev/null || true)
@@ -373,8 +392,8 @@ if [[ -z $ESP ]]; then
 fi
 [[ -n $ESP ]] || die "EFI system partition not found (mounted at /efi, /boot or /boot/efi?)"
 IMG='\EFI\usrkrnl\vmlinuz-usr.efi'
-sudo install -Dm644 "$TREE/arch/x86/boot/bzImage" "$ESP/EFI/usrkrnl/vmlinuz-usr.efi.new"
-sudo mv "$ESP/EFI/usrkrnl/vmlinuz-usr.efi.new" "$ESP/EFI/usrkrnl/vmlinuz-usr.efi"
+$SUDO install -Dm644 "$TREE/arch/x86/boot/bzImage" "$ESP/EFI/usrkrnl/vmlinuz-usr.efi.new"
+$SUDO mv "$ESP/EFI/usrkrnl/vmlinuz-usr.efi.new" "$ESP/EFI/usrkrnl/vmlinuz-usr.efi"
 sync
 msg "Kernel image: $ESP/EFI/usrkrnl/vmlinuz-usr.efi"
 
@@ -385,14 +404,14 @@ if [[ -z $entry ]]; then
 	disk=/dev/$(lsblk -no PKNAME "$espdev")
 	part=$(<"/sys/class/block/$(basename "$espdev")/partition")
 	order=$(efibootmgr | awk '/^BootOrder/ { print $2 }')
-	sudo efibootmgr -q -c -d "$disk" -p "$part" -L "$LABEL" -l "$IMG"
+	$SUDO efibootmgr -q -c -d "$disk" -p "$part" -L "$LABEL" -l "$IMG"
 	entry=$(efibootmgr | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | awk 'NR == 1')
 	# keep the old boot order: usrkrnl is only tried on demand until you decide otherwise
-	[[ -n $order ]] && sudo efibootmgr -q -o "$order"
+	[[ -n $order ]] && $SUDO efibootmgr -q -o "$order"
 	msg "UEFI entry Boot$entry \"$LABEL\" created (not in BootOrder)"
 fi
 if ((BOOTNEXT)); then
-	sudo efibootmgr -q -n "$entry"
+	$SUDO efibootmgr -q -n "$entry"
 	msg "Next reboot starts usrkrnl once. If it fails, the reboot after that uses your old kernel."
 fi
-msg "Done. To make usrkrnl the default: sudo efibootmgr -o $entry,<old order>"
+msg "Done. To make usrkrnl the default: $SUDO efibootmgr -o $entry,<old order>"

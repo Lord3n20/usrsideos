@@ -3,39 +3,52 @@
 A very small vibe-coded Linux system with its own linux-kernel that is
 tailored to the machine during installation. It got made by vibe-coding a lot of improvements for gaming and laptop usage on Arch Linux and getting those to work on other Distros as well.
 
-**Preinstalled:** yay · niri · kitty · ungoogled-chromium · hopd · iwd · usrkrnl.
-Everything else is picked in the installer (like archinstall) or installed later with `pacman`/`yay`.
+**Base system:** Arch Linux, Void Linux or Gentoo – the installer detects it from the ISO you boot.
+
+**Preinstalled:** niri · kitty · ungoogled-chromium (Void: chromium) · hopd · iwd · usrkrnl,
+plus the community package source of the base system (Arch: yay/AUR, Gentoo: GURU + pf4public overlays).
+Everything else is picked in the installer (like archinstall) or installed later with the package manager.
 
 ## Install
 
-Boot the Arch Linux ISO in **UEFI mode**, then:
+Boot the ISO of the base system in **UEFI mode**, connect to the internet, then:
 
-```sh
-iwctl station wlan0 connect MY-WIFI     # Wi-Fi only
-pacman -Sy --noconfirm git
-git clone https://github.com/Lord3n20/usrsideos
-usrsideos/install
-```
+| ISO | Commands |
+|---|---|
+| Arch | `pacman -Sy --noconfirm git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
+| Void (glibc) | `xbps-install -Sy git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
+| Gentoo minimal | `wget https://github.com/Lord3n20/usrsideos/archive/main.tar.gz && tar xf main.tar.gz && usrsideos-main/install` |
 
 Set disk, user etc. in the menu, then **Install**. The disk is erased completely:
 1 GiB EFI partition and the rest as btrfs (`@`, `@home`, zstd compression).
 
 | Menu entry | What happens |
 |---|---|
-| Autologin + niri | tty1 logs in by itself and starts `niri-session` |
+| Autologin + niri | tty1 logs in by itself and starts niri |
 | hopd | only the selected parts are compiled in; values (watts, brightness, panel) are asked for |
-| Extra packages | sound, waybar, fuzzel, mako, lock screen, Bluetooth, NVIDIA … or your own packages (prefix `aur:` = AUR) |
+| Extra packages | sound, waybar, fuzzel, mako, lock screen, Bluetooth, NVIDIA … or your own packages (Arch: prefix `aur:` = AUR) |
 | Build usrkrnl | kernel with only this machine's drivers, BORE, clang ThinLTO, no initramfs (10–40 min) |
 
+| | Arch | Void | Gentoo |
+|---|---|---|---|
+| Init | systemd | runit | OpenRC |
+| Bootstrap | pacstrap | xbps-install | stage3 (desktop-openrc) + binary packages |
+| DNS / time | systemd-resolved / timesyncd | openresolv / chrony | openresolv / chrony |
+| Install time | ~10 min | ~10 min | ~1 h+ (overlay packages are compiled) |
+
+Everything distribution specific lives in `os/<id>.sh`; `install` itself is shared.
+The installer keeps a copy of this repository in `~/usrsideos` for later rebuilds.
 `fastfetch` shows the small UsrsideOS logo; the big one: `fastfetch --logo /usr/share/usrsideos/logo.txt --logo-color-1 37 --logo-color-2 96`.
 
-The installer keeps a copy of this repository in `~/usrsideos` for later rebuilds.
+Unattended installs (for tests): `install --answers FILE`, where FILE sets `DISK`, `USERNAME`, `PASSWORD`
+and optionally any other variable from the top of `install` (e.g. `USRKRNL=0`).
 
 ## Booting
 
-- The Arch kernel (with initramfs) is always there as the fallback entry "UsrsideOS (Arch kernel)".
+- The distribution kernel (with initramfs) is always there as the fallback entry
+  "UsrsideOS (linux|void|gentoo kernel)"; a kernel hook keeps it under a fixed name in `/boot`.
 - The first reboot uses usrkrnl **once**. If it boots, `usrkrnl-confirm` makes it the default.
-  If it does not, the next boot uses the Arch kernel again.
+  If it does not, the next boot uses the distribution kernel again.
 - New hardware later? Plug the device in, use it, then run `~/usrsideos/usrkrnl/setup`.
 - Kernel update: `git -C ~/usrsideos pull && ~/usrsideos/usrkrnl/setup`.
 
@@ -62,5 +75,5 @@ Commands: `hopd befehle`; to change settings, edit `/usr/local/src/hopd/config.h
 
 ## Limits
 
-- x86_64 with UEFI only. No disk encryption (usrkrnl boots without initramfs).
+- x86_64 with UEFI only. Void: glibc only. Gentoo: OpenRC only. No disk encryption (usrkrnl boots without initramfs).
 - The installer erases the chosen disk completely, no dual boot.

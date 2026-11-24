@@ -1,0 +1,3 @@
+#!/bin/sh
+# runit service for hopd (Void)
+exec /usr/local/bin/hopd dienst 2>&1
