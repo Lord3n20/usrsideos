@@ -146,10 +146,20 @@ chroot_run() {
 		PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin "$@"
 }
 
+# a single lost ping is no reason to give up (weak Wi-Fi, VMs): 3 rounds, two targets
+online() {
+	local i h
+	for i in 1 2 3; do
+		for h in kernel.org github.com; do ping -c1 -W3 "$h" >/dev/null 2>&1 && return 0; done
+		sleep 2
+	done
+	return 1
+}
+
 requirements() {
 	((EUID == 0)) || { echo "Please run as root from the live ISO." >&2; exit 1; }
 	[[ -d /sys/firmware/efi/efivars ]] || { echo "Only UEFI is supported (boot the machine in UEFI mode)." >&2; exit 1; }
-	ping -c1 -W3 kernel.org >/dev/null 2>&1 || { echo "No internet. Connect first (iwctl / wpa_supplicant / net-setup)." >&2; exit 1; }
+	online || { echo "No internet. Connect first (iwctl / wpa_supplicant / net-setup)." >&2; exit 1; }
 	os_live_tools
 	: >"$LOG"; rm -f "$ERRFILE" "$NOTEFILE" /tmp/usrsideos-no-usrkrnl
 }
