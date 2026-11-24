@@ -99,7 +99,8 @@ EOF
 	printf '*/*::guru ~amd64\n*/*::pf4public ~amd64\n' >"$MNT/etc/portage/package.accept_keywords/usrside"
 	# dracut needs to know the root fs without the running system
 	mkdir -p "$MNT/etc/dracut.conf.d"
-	echo "filesystems+=\" $FS \"" >"$MNT/etc/dracut.conf.d/usrside.conf"
+	# host-only: the generic initramfs is ~100 MB and lives twice on the 1 GiB ESP (with the fixed-name copy)
+	printf 'hostonly="yes"\nfilesystems+=" %s "\n' "$FS" >"$MNT/etc/dracut.conf.d/usrside.conf"
 	[[ $FS != btrfs ]] || echo 'add_dracutmodules+=" btrfs "' >>"$MNT/etc/dracut.conf.d/usrside.conf"
 	in_target emerge-webrsync || die "emerge-webrsync failed"
 	in_target getuto || die "getuto (binary package keys) failed"
@@ -180,6 +181,13 @@ os_kernel_hook() {
 d=$(dirname "$2")
 cp -f "$2" "$d/vmlinuz-gentoo"
 [ -f "$d/initramfs-$1.img" ] && cp -f "$d/initramfs-$1.img" "$d/initramfs-gentoo.img"
+# /boot is the 1 GiB ESP and every gentoo-kernel-bin version is its own slot: keep the two newest
+# versions and the running one, remove older kernel files (also their .old backups)
+run=$(uname -r)
+for v in $(ls "$d" | sed -n 's/^vmlinuz-//p' | grep -v -e '^gentoo$' -e '\.old$' | sort -rV | tail -n +3); do
+	[ "$v" = "$run" ] && continue
+	for f in vmlinuz-$v initramfs-$v.img System.map-$v config-$v; do rm -f "$d/$f" "$d/$f.old"; done
+done
 exit 0
 EOF
 	# first call: kernel not emerged yet (var/db/pkg/sys-kernel alone says nothing, the stage3 has linux-headers)
