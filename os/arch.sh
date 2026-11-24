@@ -41,6 +41,9 @@ declare -A PKG=(
 declare -A AUR=( [browser]=ungoogled-chromium-bin [tuxedo]=tuxedo-drivers-dkms )
 
 os_live_tools() {
+	# The live ISO fills the pacman keyring at boot (pacman-init.service); on a
+	# slow machine it may still be running. start blocks until it is done.
+	systemctl start pacman-init.service 2>/dev/null || true
 	command -v dialog >/dev/null || pacman -Sy --noconfirm dialog >/dev/null
 	command -v arch-chroot >/dev/null || pacman -Sy --noconfirm arch-install-scripts >/dev/null
 	command -v mkfs.xfs >/dev/null || pacman -Sy --noconfirm xfsprogs >/dev/null
