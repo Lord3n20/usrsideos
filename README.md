@@ -5,6 +5,9 @@ tailored to the machine during installation. It got made by vibe-coding a lot of
 
 **Base system:** Arch Linux, Void Linux or Gentoo – the installer detects it from the ISO you boot.
 
+> **Void and Gentoo are experimental and untested.** Only the Arch backend has passed a full test
+> installation so far; on a Void or Gentoo ISO the installer asks before it continues.
+
 **Preinstalled:** niri · kitty · ungoogled-chromium (Void: chromium) · hopd · iwd · usrkrnl,
 plus the community package source of the base system (Arch: yay/AUR, Gentoo: GURU + pf4public overlays).
 Everything else is picked in the installer (like archinstall) or installed later with the package manager.
@@ -16,8 +19,8 @@ Boot the ISO of the base system in **UEFI mode**, connect to the internet, then:
 | ISO | Commands |
 |---|---|
 | Arch | `pacman -Sy --noconfirm git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
-| Void (glibc) | `xbps-install -Sy git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
-| Gentoo minimal | `wget https://github.com/Lord3n20/usrsideos/archive/main.tar.gz && tar xf main.tar.gz && usrsideos-main/install` |
+| Void (glibc, experimental) | `xbps-install -Sy git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
+| Gentoo minimal (experimental) | `wget https://github.com/Lord3n20/usrsideos/archive/main.tar.gz && tar xf main.tar.gz && usrsideos-main/install` |
 
 Set disk, user etc. in the menu, then **Install**. The disk is erased completely:
 1 GiB EFI partition and the rest as btrfs (`@`, `@home`, zstd compression).
