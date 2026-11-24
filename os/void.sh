@@ -131,8 +131,23 @@ os_kernel_hook() {
 [ -f "/boot/vmlinuz-$2" ] || exit 0
 cp -f "/boot/vmlinuz-$2" /boot/vmlinuz-void
 [ -f "/boot/initramfs-$2.img" ] && cp -f "/boot/initramfs-$2.img" /boot/initramfs-void.img
+# /boot is the 1 GiB ESP and Void keeps replaced kernels (preserve): drop the ones no package owns
+# any more (vkpurge list). Only versions older than the one just installed, never our copy
+# ("void") and never the running kernel: vkpurge reads the owners from the pkgdb, which need not
+# list the new package yet while its own hooks run, and in the installer chroot uname is the ISO's.
+run=$(uname -r)
+if command -v vkpurge >/dev/null; then
+	for k in $(vkpurge list all 2>/dev/null); do
+		[ "$k" = void ] || [ "$k" = "$2" ] || [ "$k" = "$run" ] && continue
+		[ "$(printf '%s\n%s\n' "$k" "$2" | sort -V | head -n1)" = "$k" ] || continue
+		vkpurge rm "$k" >/dev/null 2>&1 || true
+	done
+fi
 exit 0
 EOF
+	# host-only initramfs like void-installer: the generic one is ~140 MB, twice on the ESP with the copy
+	mkdir -p "$MNT/etc/dracut.conf.d"
+	printf 'hostonly="yes"\nfilesystems+=" %s "\n' "$FS" >"$MNT/etc/dracut.conf.d/10-usrside.conf"
 	local k
 	# the series package (linux6.18) is a dependency of the "linux" meta package; listing all
 	# installed linux* packages would also find linux6.18-headers (pulled in by dkms)
