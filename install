@@ -116,11 +116,23 @@ hopd_defaults() {
 	return 0
 }
 
+# prints why DISK must not be erased (empty = fine); checked before anything destructive happens.
+# The live medium is detected by its mounts (archiso bootmnt, Void /run/initramfs/live,
+# Gentoo /mnt/cdrom …); mounts below $MNT are ours from an earlier attempt.
+disk_problem() {
+	local d=$1 m
+	[[ -b $d ]] || { echo "$d is not a block device"; return; }
+	[[ $(lsblk -dno TYPE "$d" 2>/dev/null) == disk ]] || { echo "$d is not a whole disk (lsblk TYPE disk)"; return; }
+	while read -r m; do
+		[[ -z $m || $m == "$MNT" || $m == "$MNT"/* ]] && continue
+		echo "$d is in use (mounted at $m), probably the live medium"; return
+	done < <(lsblk -nro MOUNTPOINTS "$d" 2>/dev/null)   # swap shows up as [SWAP]
+}
+
 # ---------------------------------------------------------------- menu entries
 m_disk() {
-	local list=() n s m iso
-	iso=$(lsblk -npo PKNAME "$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null)" 2>/dev/null || true)
-	while read -r n s m; do [[ $n == "$iso" ]] || list+=("$n" "$s ${m:-}"); done < <(lsblk -dpno NAME,SIZE,MODEL -e 7,11)
+	local list=() n s m
+	while read -r n s m; do [[ -n $(disk_problem "$n") ]] || list+=("$n" "$s ${m:-}"); done < <(lsblk -dpno NAME,SIZE,MODEL -e 7,11)
 	((${#list[@]})) || die "No disk found."
 	DISK=$(dlg --title "Disk" --menu "Choose the target. ALL DATA ON IT WILL BE ERASED.\n\nLayout: 1 GiB EFI + rest btrfs (@, @home).\nNo encryption: usrkrnl boots without initramfs." 18 72 8 "${list[@]}") || true
 }
@@ -231,6 +243,8 @@ main_menu() {
 }
 ready() {
 	[[ -n $DISK ]] || { dlg --msgbox "Choose a disk first." 6 40; return 1; }
+	local p; p=$(disk_problem "$DISK")
+	[[ -z $p ]] || { dlg --msgbox "Cannot use this disk:\n$p" 8 64; return 1; }
 	[[ -n $USERNAME ]] || { dlg --msgbox "Create a user first." 6 40; return 1; }
 	dlg --defaultno --yesno "Install $OS_NAME + UsrsideOS now?\n\n$DISK will be ERASED COMPLETELY." 9 54
 }
@@ -482,6 +496,8 @@ if [[ -n $ANSWERS ]]; then
 	# shellcheck disable=SC1090
 	. "$ANSWERS"
 	[[ -n $DISK && -n $USERNAME && -n $PASSWORD ]] || { echo "--answers: DISK, USERNAME and PASSWORD are required" >&2; exit 1; }
+	p=$(disk_problem "$DISK")
+	[[ -z $p ]] || { log "--answers: DISK rejected: $p"; echo "--answers: DISK rejected: $p" >&2; exit 1; }
 	set +e; install_all >/dev/null; st=$?; set -e
 	if ((st)); then echo "Installation aborted: $(cat "$ERRFILE" 2>/dev/null) (log: $LOG)" >&2; exit 1; fi
 	finish_msg
