@@ -1,0 +1,10 @@
+[Unit]
+Description=Make usrkrnl the default after a successful boot
+After=multi-user.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/usrkrnl-confirm
+
+[Install]
+WantedBy=multi-user.target

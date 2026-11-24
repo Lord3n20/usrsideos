@@ -1,5 +1,5 @@
 [Unit]
-Description=hopd – Strom, Lüfter, eGPU, Akku-Log
+Description=hopd – power, fans, eGPU, battery log
 After=systemd-modules-load.service
 
 [Service]

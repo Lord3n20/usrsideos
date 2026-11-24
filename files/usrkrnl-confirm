@@ -1,0 +1,11 @@
+#!/bin/bash
+# Runs once after the first successful boot with usrkrnl and makes it the default.
+# If the machine booted the Arch kernel instead (usrkrnl broken), nothing changes.
+set -eu
+[[ $(uname -r) == *-usr ]] || exit 0
+new=$(efibootmgr | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | head -n1)
+[[ -n $new ]] || exit 0
+old=$(efibootmgr | awk '/^BootOrder/ { print $2 }' | tr ',' '\n' | grep -vix "$new" | paste -sd,)
+efibootmgr -q -o "$new${old:+,$old}"
+systemctl disable usrkrnl-confirm.service
+echo "usrkrnl is now the default (Boot$new)."

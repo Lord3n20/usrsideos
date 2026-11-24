@@ -1,0 +1,398 @@
+#!/usr/bin/env bash
+# usrkrnl/setup - configure, minimize, build and install usrkrnl for THIS machine.
+#
+# The resulting kernel only contains drivers for hardware that was in use when
+# this script ran (localmodconfig), has the drivers for the root disk and its
+# filesystem built in, the CPU microcode embedded and the kernel command line
+# compiled in. It boots directly from the UEFI firmware (EFI stub), without
+# initramfs and without bootloader.
+#
+# usrkrnl is upstream Linux (KVER below) plus the patches in patches/. The
+# source is downloaded from kernel.org, checked and patched on the first run
+# and kept in $SRC (default ~/.local/src/usrkrnl/linux-KVER).
+#
+# Run it as a normal user; sudo is used only for the install steps.
+set -euo pipefail
+
+KVER=7.3.5
+SELF=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+SRC=${USRKRNL_SRC:-$HOME/.local/src/usrkrnl}
+TREE=""
+FRAG=$SELF/usrkrnl.config
+STEP=all
+BOOTNEXT=0
+REMIN=0
+BASE=""
+LABEL="usrkrnl"
+CMDLINE_ARGS=""
+CMDLINE_SET=0
+EXTRA=()
+MODLISTS=()
+
+usage() {
+	cat <<EOF
+Usage: usrkrnl/setup [options]   (kernel $KVER)
+
+  --config-only      only write .config, do not build
+  --no-install       configure and build, but do not install
+  --bootnext         after installing, boot usrkrnl once on the next reboot
+  --base FILE        start from this kernel config instead of the running one
+  --modules FILE     also keep these modules (lsmod output or one name per line);
+                     can be given several times. ~/.config/modprobed.db is used
+                     automatically if it exists. All modules ever seen are
+                     remembered in ~/.config/usrkrnl/modules.
+  --reminimize       minimize again even if the running kernel is already usrkrnl
+  --extra FILE       merge an additional config fragment (CONFIG_X=y lines)
+  --label NAME       name of the UEFI boot entry (default: usrkrnl)
+  --cmdline "ARGS"   extra kernel parameters instead of the ones of the running
+                     kernel (root=, rw, rootwait, rootfstype are always set)
+  --tree DIR         use this (already patched) kernel source tree instead of
+                     downloading one to $SRC/linux-$KVER
+  -h, --help         show this help
+
+Tip: plug in and use every device you need (USB sticks, docks, eGPU, ...)
+before running this, otherwise their drivers are left out.
+EOF
+}
+
+msg()  { printf '\033[96m==>\033[0m %s\n' "$*"; }
+warn() { printf '\033[93m==> WARNING:\033[0m %s\n' "$*" >&2; }
+die()  { printf '\033[91m==> ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
+
+while (($#)); do
+	case $1 in
+		--config-only) STEP=config ;;
+		--no-install) STEP=build ;;
+		--bootnext) BOOTNEXT=1 ;;
+		--reminimize) REMIN=1 ;;
+		--base) BASE=${2:?}; shift ;;
+		--modules) MODLISTS+=("$(readlink -f "${2:?}")"); shift ;;
+		--extra) EXTRA+=("$(readlink -f "${2:?}")"); shift ;;
+		--label) LABEL=${2:?}; shift ;;
+		--cmdline) CMDLINE_ARGS=$2; CMDLINE_SET=1; shift ;;
+		--tree) TREE=$(readlink -f "${2:?}"); shift ;;
+		-h|--help) usage; exit 0 ;;
+		*) usage >&2; die "unknown option: $1" ;;
+	esac
+	shift
+done
+
+[[ $(uname -m) == x86_64 ]] || die "usrkrnl/setup only supports x86_64"
+((EUID != 0)) || die "run as a normal user, sudo is used where needed"
+for t in clang ld.lld llvm-ar make bc flex bison perl pahole openssl zstd findmnt blkid lsblk modinfo curl patch tar xz; do
+	command -v "$t" >/dev/null || die "missing tool: $t (Arch: pacman -S clang lld llvm base-devel bc pahole cpio perl openssl zstd curl)"
+done
+
+# ---------------------------------------------------------------- 0. source
+if [[ -z $TREE ]]; then
+	TREE=$SRC/linux-$KVER
+	if [[ ! -f $TREE/.usrkrnl-patched ]]; then
+		url=https://cdn.kernel.org/pub/linux/kernel/v${KVER%%.*}.x
+		msg "Downloading Linux $KVER to $SRC"
+		mkdir -p "$SRC"
+		rm -rf "$TREE"
+		curl -fL $([[ -t 2 ]] && echo --progress-bar || echo -sS) -o "$SRC/linux-$KVER.tar.xz" "$url/linux-$KVER.tar.xz" || die "download failed"
+		sum=$(curl -sSfL "$url/sha256sums.asc" | awk '$2 == f' f="linux-$KVER.tar.xz") ||
+			die "checksum list not available"
+		[[ -n $sum ]] || die "no checksum for linux-$KVER.tar.xz on kernel.org"
+		(cd "$SRC" && sha256sum -c --quiet <<<"$sum") || die "checksum mismatch, linux-$KVER.tar.xz is broken"
+		tar -xf "$SRC/linux-$KVER.tar.xz" -C "$SRC"
+		rm -f "$SRC/linux-$KVER.tar.xz"
+		for p in "$SELF"/patches/*.patch; do
+			[[ -e $p ]] || continue
+			msg "Applying ${p##*/}"
+			patch -d "$TREE" -p1 -s -N <"$p" || die "${p##*/} does not apply to Linux $KVER"
+		done
+		touch "$TREE/.usrkrnl-patched"
+	fi
+fi
+[[ -f $TREE/Makefile && -x $TREE/scripts/config ]] || die "not a kernel source tree: $TREE"
+msg "Source: $TREE"
+WORK=$TREE/.usrkrnl
+
+# LOCALVERSION= (empty) stops kbuild from appending "+" for an untagged git tree
+MKARGS=(-C "$TREE" LLVM=1 LOCALVERSION=)
+mk() { make "${MKARGS[@]}" "$@"; }
+kconf() { "$TREE/scripts/config" --file "$TREE/.config" "$@"; }
+mkdir -p "$WORK"
+
+# ---------------------------------------------------------------- 1. base config
+if [[ -z $BASE ]]; then
+	for c in /proc/config.gz "/boot/config-$(uname -r)" "/lib/modules/$(uname -r)/build/.config"; do
+		[[ -r $c ]] && { BASE=$c; break; }
+	done
+	[[ -n $BASE ]] || die "config of the running kernel not found, use --base FILE"
+fi
+msg "Base config: $BASE"
+[[ -f $TREE/.config ]] && cp "$TREE/.config" "$TREE/.config.old"
+case $BASE in
+	*.gz) zcat "$BASE" ;;
+	*) cat "$BASE" ;;
+esac >"$TREE/.config"
+cp "$TREE/.config" "$WORK/base.config"
+
+# module name -> CONFIG symbol, from the obj-$(CONFIG_X) += name.o lines of the tree
+find "$TREE"/{arch/x86,block,crypto,drivers,fs,lib,mm,net,security,sound,virt} \( -name Makefile -o -name Kbuild \) -print0 |
+	xargs -0 awk 'match($0, /obj-\$\(CONFIG_[A-Z0-9_]+\)[ \t]*[+:]?=/) {
+		sym = substr($0, RSTART + 6, RLENGTH - 6); sub(/\).*/, "", sym)
+		n = split(substr($0, RSTART + RLENGTH), w, /[ \t\\]+/)
+		for (i = 1; i <= n; i++) if (w[i] ~ /\.o$/) {
+			m = w[i]; sub(/\.o$/, "", m); sub(/.*\//, "", m); gsub(/-/, "_", m); print m, sym
+		}
+	}
+	match($0, /^[a-z0-9_]+-target-\$\(CONFIG_[A-Z0-9_]+\)[ \t]*[+:]?=/) {   # intel-target-$(CONFIG_X) += hid.o -> intel_hid
+		pre = $0; sub(/-target-.*/, "", pre)
+		sym = $0; sub(/^[^(]*\(CONFIG_/, "", sym); sub(/\).*/, "", sym)
+		n = split(substr($0, RSTART + RLENGTH), w, /[ \t\\]+/)
+		for (i = 1; i <= n; i++) if (w[i] ~ /\.o$/) { m = w[i]; sub(/\.o$/, "", m); m = pre "_" m; gsub(/-/, "_", m); print m, sym }
+	}' | sort -u -k1,1 >"$WORK/modindex"
+mod2sym() { awk -v m="${1//-/_}" '$1 == m { sub(/^CONFIG_/, "", $2); print $2; exit }' "$WORK/modindex"; }
+
+# ---------------------------------------------------------------- 2. minimize
+# Every run adds the currently loaded modules to a persistent list, so drivers
+# you used once (USB stick, dock, webcam ...) are not lost on the next rebuild.
+STATE=${XDG_CONFIG_HOME:-$HOME/.config}/usrkrnl/modules
+mkdir -p "${STATE%/*}"
+[[ -r $HOME/.config/modprobed.db ]] && MODLISTS+=("$HOME/.config/modprobed.db")
+{
+	lsmod
+	cat "$STATE" "${MODLISTS[@]}" 2>/dev/null || true
+} | awk '$1 != "Module" && NF { print $1 }' | sort -u >"$STATE.new"
+mv "$STATE.new" "$STATE"
+if ((REMIN == 0)) && grep -qx 'CONFIG_LOCALVERSION="-usr"' "$TREE/.config"; then
+	msg "Base is already a usrkrnl config, keeping its module selection (--reminimize to change)"
+	mk -s olddefconfig >/dev/null
+else
+	msg "Minimizing to $(wc -l <"$STATE") known modules (localmodconfig, list: $STATE)"
+	awk '{ print $1, 0, 0 }' "$STATE" >"$WORK/lsmod"
+	mk -s olddefconfig >/dev/null   # new symbols (e.g. after switching gcc -> clang) get defaults
+	mk -s LSMOD="$WORK/lsmod" localmodconfig </dev/null >"$WORK/localmodconfig.log" 2>&1 ||
+		die "localmodconfig failed, see $WORK/localmodconfig.log"
+	# localmodconfig misses some modules (only "select"ed ones, odd Makefiles). Put every
+	# known module back to its value in the base config, together with the options it
+	# depends on, until nothing changes any more.
+	kconfig_deps() {   # SYMBOL -> symbols named in its depends/default lines (not negated)
+		awk -v s="$1" '/^[ \t]*(menu)?config[ \t]/ { cur = $2; next }
+			cur == s && /^[ \t]*(depends on|default)/ {
+				gsub(/![ \t]*[A-Za-z0-9_]+/, ""); sub(/^[ \t]*(depends on|default)/, "")
+				while (match($0, /[A-Z][A-Z0-9_]+/)) { print substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH) }
+			}
+			# hidden options only come in via "select S [if COND]" of another option
+			$1 == "select" && $2 == s { print cur
+				if ($3 == "if") { $1 = $2 = $3 = ""; gsub(/![ \t]*[A-Za-z0-9_]+/, "")
+					while (match($0, /[A-Z][A-Z0-9_]+/)) { print substr($0, RSTART, RLENGTH); $0 = substr($0, RSTART + RLENGTH) } }
+			}' "$WORK/kconfig-all"
+	}
+	find "$TREE" -name 'Kconfig*' -not -path '*/.git/*' -print0 | xargs -0 cat >"$WORK/kconfig-all"
+	restored=0
+	for _ in 1 2 3 4; do
+		missing=()
+		while read -r m; do
+			sym=$(mod2sym "$m")
+			[[ -n $sym ]] && ! grep -qE "^CONFIG_$sym=[ym]" "$TREE/.config" &&
+				grep -qE "^CONFIG_$sym=[ym]" "$WORK/base.config" && missing+=("$sym")
+		done <"$STATE"
+		((${#missing[@]})) || break
+		todo=("${missing[@]}")
+		for sym in "${missing[@]}"; do todo+=($(kconfig_deps "$sym")); done
+		for sym in "${todo[@]}"; do
+			val=$(sed -n "s/^CONFIG_$sym=//p" "$WORK/base.config")
+			[[ $val == y || $val == m ]] || continue
+			grep -q "^CONFIG_$sym=$val\$" "$TREE/.config" && continue
+			if [[ $val == y ]]; then kconf --enable "$sym"; else kconf --module "$sym"; fi
+			restored=$((restored + 1))
+		done
+		mk -s olddefconfig >/dev/null
+	done
+	if ((restored)); then msg "Restored $restored options that localmodconfig dropped"; fi
+	for sym in "${missing[@]}"; do msg "note: CONFIG_$sym not kept (helper option, nothing selects it in this config)"; done
+fi
+
+# out-of-tree DKMS modules: their kernel dependencies are not visible in lsmod
+if command -v dkms >/dev/null; then
+	while read -r name sym; do
+		[[ $name == \#* || -z $name ]] && continue
+		if dkms status 2>/dev/null | grep "^$name/" >/dev/null; then kconf --module "$sym"; fi
+	done <"$SELF/dkms-deps"
+fi
+
+# ---------------------------------------------------------------- 3. usrkrnl defaults
+msg "Applying usrkrnl defaults"
+"$TREE/scripts/kconfig/merge_config.sh" -m -O "$TREE" "$TREE/.config" "$FRAG" "${EXTRA[@]}" \
+	>"$WORK/merge.log" 2>&1 || die "merging config fragments failed, see $WORK/merge.log"
+
+# ---------------------------------------------------------------- 4. root disk built in
+src=$(findmnt -no SOURCE /)
+src=${src%%\[*}
+fstype=$(findmnt -no FSTYPE /)
+rootdev=$(readlink -f "$src")
+[[ -b $rootdev ]] || die "root filesystem is not on a block device ($src)"
+rtype=$(lsblk -dno TYPE "$rootdev")
+[[ $rtype == part ]] ||
+	die "root is on a '$rtype' device (LUKS, LVM, RAID ...). That needs an initramfs, which usrkrnl does not use."
+partuuid=$(lsblk -dno PARTUUID "$rootdev")
+[[ -n $partuuid ]] || partuuid=$(sudo blkid -s PARTUUID -o value "$rootdev")
+[[ -n $partuuid ]] || die "no PARTUUID for $rootdev (GPT partition table needed)"
+msg "Root: $rootdev ($fstype), PARTUUID=$partuuid"
+
+declare -A seen=()
+want=()
+add_mod() {
+	local m=${1//-/_} d
+	[[ -n $m && -z ${seen[$m]:-} ]] || return 0
+	seen[$m]=1
+	want+=("$m")
+	for d in $(modinfo -F depends "$m" 2>/dev/null | tr ',' ' '); do add_mod "$d"; done
+	for d in $(modinfo -F softdep "$m" 2>/dev/null | tr ' ' '\n' | grep -v ':$' || true); do add_mod "$d"; done
+}
+add_mod "$fstype"
+p=$(readlink -f "/sys/class/block/$(basename "$rootdev")")
+while [[ $p == /sys/devices/* ]]; do
+	[[ -e $p/driver/module ]] && add_mod "$(basename "$(readlink -f "$p/driver/module")")"
+	p=${p%/*}
+done
+
+rootsyms=()
+for m in "${want[@]}"; do
+	sym=$(mod2sym "$m")
+	if [[ -n $sym ]]; then
+		rootsyms+=("${sym#CONFIG_}")
+		kconf --enable "${sym#CONFIG_}"
+	fi
+done
+msg "Built in for the root disk: ${rootsyms[*]:-(already built in)}"
+
+# ---------------------------------------------------------------- 5. microcode
+vendor=$(awk -F': ' '/^vendor_id/ { print $2; exit }' /proc/cpuinfo)
+fam=$(awk -F': ' '/^cpu family/ { print $2; exit }' /proc/cpuinfo)
+model=$(awk -F': ' '/^model\t/ { print $2; exit }' /proc/cpuinfo)
+step=$(awk -F': ' '/^stepping/ { print $2; exit }' /proc/cpuinfo)
+case $vendor in
+	GenuineIntel) ucode=$(printf 'intel-ucode/%02x-%02x-%02x' "$fam" "$model" "$step") ;;
+	AuthenticAMD)
+		if ((fam >= 21)); then ucode=$(printf 'amd-ucode/microcode_amd_fam%xh.bin' "$fam")
+		else ucode=amd-ucode/microcode_amd.bin; fi ;;
+	*) ucode="" ;;
+esac
+FW=$WORK/firmware
+rm -rf "$FW"
+fwsrc=""
+for ext in "" .zst .xz; do
+	[[ -n $ucode && -r /usr/lib/firmware/$ucode$ext ]] && { fwsrc=/usr/lib/firmware/$ucode$ext; break; }
+done
+if [[ -n $fwsrc ]]; then
+	mkdir -p "$FW/${ucode%/*}"
+	case $fwsrc in
+		*.zst) zstd -qdc "$fwsrc" ;;
+		*.xz) xz -dc "$fwsrc" ;;
+		*) cat "$fwsrc" ;;
+	esac >"$FW/$ucode"
+	kconf --enable MICROCODE --set-str EXTRA_FIRMWARE "$ucode" --set-str EXTRA_FIRMWARE_DIR "$FW"
+	msg "Microcode embedded: $ucode"
+else
+	kconf --set-str EXTRA_FIRMWARE ""
+	warn "no microcode file found for this CPU (Arch: intel-ucode / linux-firmware-amd), building without"
+fi
+
+# ---------------------------------------------------------------- 6. command line
+set -f
+args=()
+if ((CMDLINE_SET)); then src_args=$CMDLINE_ARGS; else src_args=$(</proc/cmdline); fi
+for a in $src_args; do
+	case $a in
+		BOOT_IMAGE=*|initrd=*|root=*|rootfstype=*|rootwait|rw|ro|rd.*|cryptdevice=*|init=*) ;;
+		*) [[ " ${args[*]} " == *" $a "* ]] || args+=("$a") ;;
+	esac
+done
+set +f
+cmd="root=PARTUUID=$partuuid rw rootwait rootfstype=$fstype"
+if [[ $fstype == btrfs && " ${args[*]} " != *" rootflags="* ]]; then
+	sub=$(findmnt -no FSROOT /)
+	[[ $sub != / ]] && cmd+=" rootflags=subvol=$sub"
+fi
+cmd+="${args[*]:+ ${args[*]}}"
+kconf --set-str CMDLINE "$cmd"
+msg "Built-in command line: $cmd"
+
+# ---------------------------------------------------------------- 7. known pitfalls
+# iwd uses the kernel crypto API via AF_ALG; localmodconfig does not see those.
+if command -v iwd >/dev/null || [[ -x /usr/lib/iwd/iwd ]]; then
+	for s in CRYPTO_USER_API CRYPTO_USER_API_HASH CRYPTO_USER_API_SKCIPHER CRYPTO_USER_API_AEAD \
+		CRYPTO_CMAC CRYPTO_HMAC CRYPTO_MD4 CRYPTO_MD5 CRYPTO_SHA1 CRYPTO_SHA256 CRYPTO_SHA512 \
+		CRYPTO_AES CRYPTO_AES_NI_INTEL CRYPTO_ECB CRYPTO_CBC CRYPTO_DES CRYPTO_ARC4 \
+		KEY_DH_OPERATIONS ASYMMETRIC_KEY_TYPE ASYMMETRIC_PUBLIC_KEY_SUBTYPE X509_CERTIFICATE_PARSER \
+		PKCS7_MESSAGE_PARSER PKCS8_PRIVATE_KEY_PARSER; do
+		kconf --enable "$s"
+	done
+	msg "iwd found: crypto API for iwd built in"
+fi
+
+mk -s olddefconfig >/dev/null
+
+# ---------------------------------------------------------------- 8. verify
+bad=0
+for s in "${rootsyms[@]}"; do
+	grep -q "^CONFIG_$s=y" "$TREE/.config" || { warn "CONFIG_$s could not be set to y (root disk driver)"; bad=1; }
+done
+for s in EFI_STUB CMDLINE_BOOL; do
+	grep -q "^CONFIG_$s=y" "$TREE/.config" || { warn "CONFIG_$s is not set"; bad=1; }
+done
+while IFS= read -r line; do
+	[[ $line =~ ^CONFIG_[A-Z0-9_]+= ]] || continue
+	grep -qxF "$line" "$TREE/.config" || warn "not applied: $line"
+done < <(cat "$FRAG" "${EXTRA[@]}")
+((bad == 0)) || die "config is not bootable without initramfs, see warnings above"
+KREL=$(mk -s kernelversion)$(sed -n 's/^CONFIG_LOCALVERSION="\(.*\)"$/\1/p' "$TREE/.config")
+cp "$TREE/.config" "$WORK/config-$KREL"
+msg "Config ready: $KREL (copy in $WORK/config-$KREL)"
+[[ $STEP == config ]] && exit 0
+
+# ---------------------------------------------------------------- 9. build
+msg "Building $KREL with $(nproc) threads (log: $WORK/build.log)"
+if ! nice -n 15 make "${MKARGS[@]}" -j"$(nproc)" >"$WORK/build.log" 2>&1; then
+	tail -n 30 "$WORK/build.log" >&2
+	die "build failed"
+fi
+msg "Build finished: arch/x86/boot/bzImage"
+[[ $STEP == build ]] && exit 0
+
+# ---------------------------------------------------------------- 10. install
+msg "Installing modules to /lib/modules/$KREL"
+sudo make "${MKARGS[@]}" -s modules_install INSTALL_MOD_STRIP=1
+sudo ln -sfn "$TREE" "/lib/modules/$KREL/build"
+if command -v dkms >/dev/null; then
+	msg "Building DKMS modules"
+	sudo dkms autoinstall -k "$KREL" || warn "DKMS failed, check 'dkms status'"
+fi
+
+ESP=$(bootctl --print-esp-path 2>/dev/null || true)
+if [[ -z $ESP ]]; then
+	for d in /efi /boot /boot/efi; do
+		[[ $(findmnt -no FSTYPE "$d" 2>/dev/null) == vfat ]] && { ESP=$d; break; }
+	done
+fi
+[[ -n $ESP ]] || die "EFI system partition not found (mounted at /efi, /boot or /boot/efi?)"
+IMG='\EFI\usrkrnl\vmlinuz-usr.efi'
+sudo install -Dm644 "$TREE/arch/x86/boot/bzImage" "$ESP/EFI/usrkrnl/vmlinuz-usr.efi.new"
+sudo mv "$ESP/EFI/usrkrnl/vmlinuz-usr.efi.new" "$ESP/EFI/usrkrnl/vmlinuz-usr.efi"
+sync
+msg "Kernel image: $ESP/EFI/usrkrnl/vmlinuz-usr.efi"
+
+command -v efibootmgr >/dev/null || die "efibootmgr missing, cannot create a boot entry"
+entry=$(efibootmgr | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | awk 'NR == 1')
+if [[ -z $entry ]]; then
+	espdev=$(findmnt -no SOURCE "$ESP")
+	disk=/dev/$(lsblk -no PKNAME "$espdev")
+	part=$(<"/sys/class/block/$(basename "$espdev")/partition")
+	order=$(efibootmgr | awk '/^BootOrder/ { print $2 }')
+	sudo efibootmgr -q -c -d "$disk" -p "$part" -L "$LABEL" -l "$IMG"
+	entry=$(efibootmgr | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | awk 'NR == 1')
+	# keep the old boot order: usrkrnl is only tried on demand until you decide otherwise
+	[[ -n $order ]] && sudo efibootmgr -q -o "$order"
+	msg "UEFI entry Boot$entry \"$LABEL\" created (not in BootOrder)"
+fi
+if ((BOOTNEXT)); then
+	sudo efibootmgr -q -n "$entry"
+	msg "Next reboot starts usrkrnl once. If it fails, the reboot after that uses your old kernel."
+fi
+msg "Done. To make usrkrnl the default: sudo efibootmgr -o $entry,<old order>"

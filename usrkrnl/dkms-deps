@@ -1,0 +1,2 @@
+# DKMS package   kernel option it needs (enabled as module when the package is installed)
+tuxedo-drivers   IIO

@@ -1,56 +1,64 @@
 # UsrsideOS
 
-Ein sehr kleines Arch-Linux-System mit eigenem Kernel ([usrkrnl](https://github.com/Lord3n20/usrkrnl)),
-das beim Installieren auf den Rechner zugeschnitten wird.
+A very small Arch Linux system with its own kernel ([usrkrnl](usrkrnl/)) that is
+tailored to the machine during installation.
 
-**Vorinstalliert:** yay · niri · kitty · ungoogled-chromium · hopd · iwd · usrkrnl.
-Alles andere wählt man im Installer dazu (wie bei archinstall) oder installiert es später mit `pacman`/`yay`.
+**Preinstalled:** yay · niri · kitty · ungoogled-chromium · hopd · iwd · usrkrnl.
+Everything else is picked in the installer (like archinstall) or installed later with `pacman`/`yay`.
 
-## Installieren
+## Install
 
-Arch-Linux-ISO im **UEFI-Modus** starten, dann:
+Boot the Arch Linux ISO in **UEFI mode**, then:
 
 ```sh
-iwctl station wlan0 connect MEIN-WLAN     # nur bei WLAN
+iwctl station wlan0 connect MY-WIFI     # Wi-Fi only
 pacman -Sy --noconfirm git
 git clone https://github.com/Lord3n20/usrsideos
 usrsideos/install
 ```
 
-Im Menü Festplatte, Benutzer usw. einstellen, dann **Installieren**. Die Festplatte wird
-komplett gelöscht: 1 GiB EFI-Partition und der Rest als btrfs (`@`, `@home`, zstd-Kompression).
+Set disk, user etc. in the menu, then **Install**. The disk is erased completely:
+1 GiB EFI partition and the rest as btrfs (`@`, `@home`, zstd compression).
 
-| Menüpunkt | Was passiert |
+| Menu entry | What happens |
 |---|---|
-| Autologin + niri | tty1 meldet sich selbst an und startet `niri-session` |
-| hopd | Nur die gewählten Teile werden einkompiliert, Werte (Watt, Helligkeit, Panel) werden abgefragt |
-| Zusatzpakete | Ton, waybar, fuzzel, mako, Sperrbildschirm, Bluetooth, NVIDIA … oder eigene Pakete (`aur:` davor = AUR) |
-| usrkrnl bauen | Kernel nur mit den Treibern dieses Rechners, BORE, clang ThinLTO, ohne initramfs (10–40 min) |
+| Autologin + niri | tty1 logs in by itself and starts `niri-session` |
+| hopd | only the selected parts are compiled in; values (watts, brightness, panel) are asked for |
+| Extra packages | sound, waybar, fuzzel, mako, lock screen, Bluetooth, NVIDIA … or your own packages (prefix `aur:` = AUR) |
+| Build usrkrnl | kernel with only this machine's drivers, BORE, clang ThinLTO, no initramfs (10–40 min) |
 
-## Starten
+The installer keeps a copy of this repository in `~/usrsideos` for later rebuilds.
 
-- Der Arch-Kernel (mit initramfs) ist immer als Notfall-Eintrag „UsrsideOS (Arch-Kernel)“ da.
-- Der erste Neustart nimmt **einmal** usrkrnl. Klappt der Start, macht `usrkrnl-bestaetigen`
-  ihn zum Standard. Klappt er nicht, startet beim nächsten Mal wieder der Arch-Kernel.
-- Neue Hardware später? Gerät einstecken, benutzen, dann `cd ~/usrkrnl && usrkrnl/setup`.
+## Booting
+
+- The Arch kernel (with initramfs) is always there as the fallback entry "UsrsideOS (Arch kernel)".
+- The first reboot uses usrkrnl **once**. If it boots, `usrkrnl-confirm` makes it the default.
+  If it does not, the next boot uses the Arch kernel again.
+- New hardware later? Plug the device in, use it, then run `~/usrsideos/usrkrnl/setup`.
+- Kernel update: `git -C ~/usrsideos pull && ~/usrsideos/usrkrnl/setup`.
+
+## usrkrnl
+
+Upstream Linux stable plus the BORE scheduler, configured and built per machine
+by [`usrkrnl/setup`](usrkrnl/setup). Details: [usrkrnl/README.md](usrkrnl/README.md).
 
 ## hopd
 
-Ein kleiner Daemon in C (Stil dwm: Einstellungen in `config.h`, Teile in `patches.h`, neu bauen mit `make`).
-Liegt nach der Installation in `/usr/local/src/hopd`.
+A small daemon in C (dwm style: settings in `config.h`, parts in `patches.h`, rebuild with `make`).
+Installed to `/usr/local/src/hopd`. Its commands and config names are German.
 
-| Teil | Wofür |
+| Part | Purpose |
 |---|---|
-| strom | Profile für Netz / Akku / Akku mit eGPU: RAPL-Leistung, EPP, Turbo, ASPM, Helligkeit, USB- und PCI-Stromsparen |
-| akkulog | Akku-Verbrauch mitschreiben, Auswertung mit `akku-log report` |
-| luefter | Lüfterkurven, nur TUXEDO InfinityBook Pro Gen9 |
-| egpu | Thunderbolt-eGPU wecken, Abrisse protokollieren |
-| niri | Deckel, Bildwiederholrate je Netz/Akku, waybar-Start, Sperren |
+| strom | profiles for AC / battery / battery with eGPU: RAPL power, EPP, turbo, ASPM, brightness, USB and PCI power saving |
+| akkulog | log battery drain, summary with `akku-log report` |
+| luefter | fan curves, TUXEDO InfinityBook Pro Gen9 only |
+| egpu | wake a Thunderbolt eGPU, log disconnects |
+| niri | lid, refresh rate on AC/battery, waybar start, locking |
 
-Befehle: `hopd befehle`; ändern: `/usr/local/src/hopd/config.h` bearbeiten, dann
+Commands: `hopd befehle`; to change settings, edit `/usr/local/src/hopd/config.h`, then
 `sudo make -C /usr/local/src/hopd install && sudo systemctl restart hopd`.
 
-## Grenzen
+## Limits
 
-- Nur x86_64 mit UEFI. Keine Festplattenverschlüsselung (usrkrnl startet ohne initramfs).
-- Der Installer löscht die gewählte Festplatte komplett, kein Dual-Boot.
+- x86_64 with UEFI only. No disk encryption (usrkrnl boots without initramfs).
+- The installer erases the chosen disk completely, no dual boot.
