@@ -16,7 +16,7 @@
 # read-only package cache (e.g. the host cache in the VM) for faster test runs.
 #
 # Backend contract (os/*.sh): OS_NAME OS_KERNEL_NAME FREE_HINT COMMUNITY SESSION_CMD IWD_DNS SSH_PKG
-# BASE UCODE_INTEL UCODE_AMD EXTRAS, functions os_live_tools os_chroot os_bootstrap os_locale
+# BASE UCODE_INTEL UCODE_AMD EXTRAS FS_PKG_btrfs FS_PKG_xfs (tools of the chosen root fs, added to BASE), functions os_live_tools os_chroot os_bootstrap os_locale
 # os_enable os_services os_autologin os_sound os_community os_kernel_hook os_hopd_service
 # os_confirm_service os_finish. Helpers for backends: log, die (aborts), warn (goes on; shown in
 # the final dialog, for optional parts such as sound).
@@ -48,6 +48,10 @@ PASSWORD=""
 AUTOLOGIN=1
 USRKRNL=1
 KERNEL_ARGS="quiet"
+# root filesystem (the ESP is always vfat)
+FS=btrfs                     # btrfs | xfs
+BTRFS_SUBVOLS="@home"        # besides @ (root): any of @home @var_log @cache @snapshots; "flat" = none at all
+BTRFS_COMPRESS=zstd:1        # zstd:1 … zstd:15 | lzo | none
 EXTRA_REPO=()
 EXTRA_AUR=()
 TEST_SSH_KEY=""
@@ -129,12 +133,47 @@ disk_problem() {
 	done < <(lsblk -nro MOUNTPOINTS "$d" 2>/dev/null)   # swap shows up as [SWAP]
 }
 
+# btrfs subvolume -> mount point
+subvol_dir() { case $1 in @) echo / ;; @home) echo /home ;; @var_log) echo /var/log ;; @cache) echo /var/cache ;; @snapshots) echo /.snapshots ;; esac; }
+btrfs_flat() { [[ $BTRFS_SUBVOLS == flat ]]; }
+
+# prints what is wrong with FS / BTRFS_* (empty = fine)
+fs_problem() {
+	local s
+	case $FS in
+		xfs) return 0 ;;
+		btrfs) ;;
+		*) echo "FS=$FS: only btrfs or xfs"; return ;;
+	esac
+	if ! btrfs_flat; then
+		for s in $BTRFS_SUBVOLS; do
+			[[ $s != @ && -n $(subvol_dir "$s") ]] || { echo "BTRFS_SUBVOLS: unknown '$s' (@home @var_log @cache @snapshots or flat)"; return; }
+		done
+	fi
+	[[ $BTRFS_COMPRESS =~ ^(zstd(:([1-9]|1[0-5]))?|lzo|none)$ ]] || echo "BTRFS_COMPRESS=$BTRFS_COMPRESS: zstd:1…zstd:15, lzo or none"
+}
+
+# mount options of the root fs; discard=async only on SSDs (ROTA 0)
+fs_opts() {
+	local o=noatime
+	if [[ $FS == btrfs ]]; then
+		[[ $BTRFS_COMPRESS == none ]] || o+=",compress=$BTRFS_COMPRESS"
+		[[ $(lsblk -dno ROTA "$DISK" 2>/dev/null | tr -d ' ') == 0 ]] && o+=",discard=async"
+	fi
+	echo "$o"
+}
+fs_summary() {
+	if [[ $FS == xfs ]]; then echo xfs
+	elif btrfs_flat; then echo "btrfs flat, $BTRFS_COMPRESS"
+	else echo "btrfs @ $BTRFS_SUBVOLS, $BTRFS_COMPRESS"; fi
+}
+
 # ---------------------------------------------------------------- menu entries
 m_disk() {
 	local list=() n s m
 	while read -r n s m; do [[ -n $(disk_problem "$n") ]] || list+=("$n" "$s ${m:-}"); done < <(lsblk -dpno NAME,SIZE,MODEL -e 7,11)
 	((${#list[@]})) || die "No disk found."
-	DISK=$(dlg --title "Disk" --menu "Choose the target. ALL DATA ON IT WILL BE ERASED.\n\nLayout: 1 GiB EFI + rest btrfs (@, @home).\nNo encryption: usrkrnl boots without initramfs." 18 72 8 "${list[@]}") || true
+	DISK=$(dlg --title "Disk" --menu "Choose the target. ALL DATA ON IT WILL BE ERASED.\n\nLayout: 1 GiB EFI + rest $(fs_summary) (menu: Filesystem).\nNo encryption: usrkrnl boots without initramfs." 18 72 8 "${list[@]}") || true
 }
 m_keyboard() {
 	local k
@@ -160,6 +199,26 @@ m_user() {
 m_autologin() {
 	if dlg --yesno "Log in automatically on tty1 and start niri?\n\n(The UsrsideOS way: power on → desktop. Locking is done by hyprlock/swaylock if installed.)" 10 64
 	then AUTOLOGIN=1; else AUTOLOGIN=0; fi
+}
+m_fs() {
+	local f s c
+	f=$(dlg --title "Filesystem" --default-item "$FS" --menu "Root filesystem (the EFI partition is always vfat):" 11 64 2 \
+		btrfs "subvolumes, compression, snapshots" \
+		xfs   "simple and fast, no subvolumes") || return 0
+	FS=$f
+	[[ $FS == btrfs ]] || return 0
+	s=$(dlg --title "btrfs subvolumes" --checklist "Root is always @. Extra subvolumes (none selected = only @).\nChoose \"flat\" for no subvolumes at all." 15 66 5 \
+		@home      /home        "$( [[ " $BTRFS_SUBVOLS " == *" @home "* ]] && echo on || echo off)" \
+		@var_log   /var/log     "$( [[ " $BTRFS_SUBVOLS " == *" @var_log "* ]] && echo on || echo off)" \
+		@cache     /var/cache   "$( [[ " $BTRFS_SUBVOLS " == *" @cache "* ]] && echo on || echo off)" \
+		@snapshots /.snapshots  "$( [[ " $BTRFS_SUBVOLS " == *" @snapshots "* ]] && echo on || echo off)" \
+		flat       "no subvolumes" "$(btrfs_flat && echo on || echo off)") || return 0
+	s=$(echo $s | tr -d '"')
+	if [[ " $s " == *" flat "* ]]; then BTRFS_SUBVOLS=flat; else BTRFS_SUBVOLS=$s; fi
+	c=$(dlg --title "btrfs compression" --default-item "$BTRFS_COMPRESS" --menu "Compression (noatime is always set, discard=async on SSDs):" 13 64 5 \
+		zstd:1 "fast, good ratio (default)" zstd:3 "better ratio, a bit slower" \
+		zstd:9 "strong, slow writes" lzo "fastest, weaker" none "no compression") || return 0
+	BTRFS_COMPRESS=$c
 }
 m_kernel() {
 	local a
@@ -221,8 +280,9 @@ main_menu() {
 	while true; do
 		hparts=""
 		for t in STROM AKKULOG LUEFTER EGPU NIRI; do v=H_$t; ((${!v})) && hparts+="${t,,} "; done
-		choice=$(dlg --title "$TITLE" --cancel-label "Cancel" --menu "Base system: $OS_NAME. Set the options, then Install." 22 76 11 \
+		choice=$(dlg --title "$TITLE" --cancel-label "Cancel" --menu "Base system: $OS_NAME. Set the options, then Install." 23 76 12 \
 			1 "Disk:             ${DISK:-(choose)}" \
+			F "Filesystem:       $(fs_summary)" \
 			2 "Keyboard/locale:  $KEYMAP, $LOCALE" \
 			3 "Time zone:        $TIMEZONE" \
 			4 "Hostname:         $HOSTNAME_" \
@@ -234,7 +294,7 @@ main_menu() {
 			I "Install" \
 			Q "Cancel") || exit 0
 		case $choice in
-			1) m_disk ;; 2) m_keyboard ;; 3) m_timezone ;; 4) m_hostname ;; 5) m_user ;;
+			1) m_disk ;; F) m_fs ;; 2) m_keyboard ;; 3) m_timezone ;; 4) m_hostname ;; 5) m_user ;;
 			6) m_autologin ;; 7) m_hopd ;; 8) m_extras ;; 9) m_kernel ;;
 			I) ready && return 0 ;;
 			Q) exit 0 ;;
@@ -245,6 +305,8 @@ ready() {
 	[[ -n $DISK ]] || { dlg --msgbox "Choose a disk first." 6 40; return 1; }
 	local p; p=$(disk_problem "$DISK")
 	[[ -z $p ]] || { dlg --msgbox "Cannot use this disk:\n$p" 8 64; return 1; }
+	p=$(fs_problem)
+	[[ -z $p ]] || { dlg --msgbox "Filesystem settings:\n$p" 8 64; return 1; }
 	[[ -n $USERNAME ]] || { dlg --msgbox "Create a user first." 6 40; return 1; }
 	dlg --defaultno --yesno "Install $OS_NAME + UsrsideOS now?\n\n$DISK will be ERASED COMPLETELY." 9 54
 }
@@ -262,35 +324,56 @@ partition() {
 	mapfile -t PARTS < <(lsblk -lnpo NAME,TYPE "$DISK" | awk '$2 == "part" { print $1 }')
 	ESP=${PARTS[0]} ROOT=${PARTS[1]}
 	mkfs.fat -F32 -n EFI "$ESP" >>"$LOG" 2>&1
-	mkfs.btrfs -f -L usrside "$ROOT" >>"$LOG" 2>&1
-	mount "$ROOT" "$MNT"
-	btrfs subvolume create "$MNT/@" "$MNT/@home" >>"$LOG"
-	umount "$MNT"
-	local o=noatime,compress=zstd:1
-	mount -o "$o,subvol=@" "$ROOT" "$MNT"
-	mount --mkdir -o "$o,subvol=@home" "$ROOT" "$MNT/home"
+	# SUBVOLS: subvolumes to mount (root first); empty for xfs and flat btrfs
+	local o s flags=""
+	o=$(fs_opts)
+	SUBVOLS=()
+	log "Root filesystem: $(fs_summary), options $o"
+	if [[ $FS == xfs ]]; then
+		mkfs.xfs -f -L usrside "$ROOT" >>"$LOG" 2>&1
+		mount -o "$o" "$ROOT" "$MNT"
+	else
+		mkfs.btrfs -f -L usrside "$ROOT" >>"$LOG" 2>&1
+		if btrfs_flat; then
+			mount -o "$o" "$ROOT" "$MNT"
+		else
+			# shellcheck disable=SC2206  # space separated list, checked by fs_problem
+			SUBVOLS=(@ $BTRFS_SUBVOLS)
+			mount "$ROOT" "$MNT"
+			for s in "${SUBVOLS[@]}"; do btrfs subvolume create "$MNT/$s" >>"$LOG"; done
+			umount "$MNT"
+			for s in "${SUBVOLS[@]}"; do mount --mkdir -o "$o,subvol=$s" "$ROOT" "$MNT$(subvol_dir "$s")"; done
+			flags=" rootflags=subvol=@"
+		fi
+	fi
 	mount --mkdir -o fmask=0077,dmask=0077 "$ESP" "$MNT/boot"
 	PARTUUID=$(blkid -s PARTUUID -o value "$ROOT")
-	ROOT_CMDLINE="root=PARTUUID=$PARTUUID rw rootflags=subvol=@ rootfstype=btrfs $KERNEL_ARGS"
+	ROOT_CMDLINE="root=PARTUUID=$PARTUUID rw$flags rootfstype=$FS $KERNEL_ARGS"
 }
 
 packages() {
 	local i
-	REPO=("${BASE[@]}")
+	local fsp="FS_PKG_$FS"
+	# shellcheck disable=SC2206  # may name several packages
+	REPO=("${BASE[@]}" ${!fsp})
 	if grep -q GenuineIntel /proc/cpuinfo; then [[ -z $UCODE_INTEL ]] || REPO+=("$UCODE_INTEL")
 	elif grep -q AuthenticAMD /proc/cpuinfo; then [[ -z $UCODE_AMD ]] || REPO+=("$UCODE_AMD"); fi
 	for ((i = 0; i < ${#EXTRAS[@]}; i += 3)); do [[ ${EXTRAS[i+2]} == on ]] && REPO+=(${EXTRAS[i]}); done
 	REPO+=("${EXTRA_REPO[@]}")
 	[[ -z $TEST_SSH_KEY ]] || REPO+=("$SSH_PKG")
 	os_bootstrap
-	local ruuid euuid o=noatime,compress=zstd:1
+	local ruuid euuid o s
+	o=$(fs_opts)
 	ruuid=$(blkid -s UUID -o value "$ROOT"); euuid=$(blkid -s UUID -o value "$ESP")
-	cat >"$MNT/etc/fstab" <<EOF
-# <device>  <mount point>  <type>  <options>  <dump>  <pass>
-UUID=$ruuid  /      btrfs  $o,subvol=@      0 0
-UUID=$ruuid  /home  btrfs  $o,subvol=@home  0 0
-UUID=$euuid  /boot  vfat   fmask=0077,dmask=0077  0 2
-EOF
+	{
+		echo "# <device>  <mount point>  <type>  <options>  <dump>  <pass>"
+		if ((${#SUBVOLS[@]})); then
+			for s in "${SUBVOLS[@]}"; do echo "UUID=$ruuid  $(subvol_dir "$s")  btrfs  $o,subvol=$s  0 0"; done
+		else
+			echo "UUID=$ruuid  /  $FS  $o  0 0"   # xfs/btrfs need no fsck pass
+		fi
+		echo "UUID=$euuid  /boot  vfat  fmask=0077,dmask=0077  0 2"
+	} >"$MNT/etc/fstab"
 }
 
 base_system() {
@@ -499,6 +582,8 @@ if [[ -n $ANSWERS ]]; then
 	[[ -n $DISK && -n $USERNAME && -n $PASSWORD ]] || { echo "--answers: DISK, USERNAME and PASSWORD are required" >&2; exit 1; }
 	p=$(disk_problem "$DISK")
 	[[ -z $p ]] || { log "--answers: DISK rejected: $p"; echo "--answers: DISK rejected: $p" >&2; exit 1; }
+	p=$(fs_problem)
+	[[ -z $p ]] || { log "--answers: $p"; echo "--answers: $p" >&2; exit 1; }
 	set +e; install_all >/dev/null; st=$?; set -e
 	if ((st)); then echo "Installation aborted: $(cat "$ERRFILE" 2>/dev/null) (log: $LOG)" >&2; exit 1; fi
 	finish_msg

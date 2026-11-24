@@ -15,11 +15,13 @@ STAGE3_BASE=https://distfiles.gentoo.org/releases/amd64/autobuilds
 STAGE3_LIST=latest-stage3-amd64-desktop-openrc.txt
 
 BASE=(sys-kernel/gentoo-kernel-bin sys-kernel/linux-firmware sys-kernel/installkernel
-	sys-fs/btrfs-progs sys-fs/dosfstools app-admin/sudo net-wireless/iwd net-misc/dhcpcd net-dns/openresolv
+	sys-fs/dosfstools app-admin/sudo net-wireless/iwd net-misc/dhcpcd net-dns/openresolv
 	sys-auth/elogind sys-apps/dbus net-misc/chrony gui-wm/niri x11-terms/kitty
 	gui-apps/xwayland-satellite sys-apps/xdg-desktop-portal-gnome media-fonts/noto
 	www-client/ungoogled-chromium-bin dev-vcs/git sys-boot/efibootmgr
 	llvm-core/clang llvm-core/lld sys-devel/bc dev-util/pahole app-arch/cpio net-misc/curl app-arch/zstd)
+FS_PKG_btrfs=sys-fs/btrfs-progs
+FS_PKG_xfs=sys-fs/xfsprogs
 UCODE_INTEL=sys-firmware/intel-microcode
 UCODE_AMD=""                  # AMD microcode is part of linux-firmware
 
@@ -49,7 +51,7 @@ fetch() { if command -v curl >/dev/null; then curl -fsSL -o "$2" "$1"; else wget
 
 os_live_tools() {
 	local t
-	for t in dialog sfdisk mkfs.btrfs mkfs.vfat tar xz; do
+	for t in dialog sfdisk mkfs.btrfs mkfs.xfs mkfs.vfat tar xz; do
 		command -v "$t" >/dev/null || { echo "$t is missing on this ISO (use the Gentoo minimal or LiveGUI ISO)." >&2; exit 1; }
 	done
 	command -v curl >/dev/null || command -v wget >/dev/null || { echo "Neither curl nor wget found." >&2; exit 1; }
@@ -92,7 +94,8 @@ EOF
 	printf '*/*::guru ~amd64\n*/*::pf4public ~amd64\n' >"$MNT/etc/portage/package.accept_keywords/usrside"
 	# dracut needs to know the root fs without the running system
 	mkdir -p "$MNT/etc/dracut.conf.d"
-	echo 'add_dracutmodules+=" btrfs "' >"$MNT/etc/dracut.conf.d/usrside.conf"
+	echo "filesystems+=\" $FS \"" >"$MNT/etc/dracut.conf.d/usrside.conf"
+	[[ $FS != btrfs ]] || echo 'add_dracutmodules+=" btrfs "' >>"$MNT/etc/dracut.conf.d/usrside.conf"
 	in_target emerge-webrsync || die "emerge-webrsync failed"
 	in_target getuto || die "getuto (binary package keys) failed"
 	emerge_ app-eselect/eselect-repository dev-vcs/git || die "eselect-repository failed"

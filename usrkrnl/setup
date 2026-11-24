@@ -272,6 +272,19 @@ for m in "${want[@]}"; do
 		kconf --enable "${sym#CONFIG_}"
 	fi
 done
+# Without initramfs the root filesystem must be =y. The module walk above already covers it,
+# but modinfo may not know the module (e.g. in the installer chroot), so force it by name.
+# The crypto/checksum helpers are best effort: newer kernels select them from the fs symbol.
+case $fstype in
+	btrfs) fssym=BTRFS_FS; fsdeps=(CRYPTO_CRC32C LIBCRC32C CRYPTO_XXHASH CRYPTO_SHA256 CRYPTO_BLAKE2B) ;;
+	xfs)   fssym=XFS_FS;   fsdeps=(CRYPTO_CRC32C LIBCRC32C) ;;
+	ext4)  fssym=EXT4_FS;  fsdeps=(CRYPTO_CRC32C LIBCRC32C) ;;
+	*)     fssym="";       fsdeps=() ;;
+esac
+if [[ -n $fssym ]]; then
+	for s in "$fssym" "${fsdeps[@]}"; do kconf --enable "$s"; done   # unknown symbols are dropped by olddefconfig
+	[[ " ${rootsyms[*]} " == *" $fssym "* ]] || rootsyms+=("$fssym")
+fi
 msg "Built in for the root disk: ${rootsyms[*]:-(already built in)}"
 
 # ---------------------------------------------------------------- 5. microcode

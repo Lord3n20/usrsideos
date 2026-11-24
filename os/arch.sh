@@ -9,9 +9,11 @@ SSH_PKG=openssh
 SESSION_CMD="exec niri-session"
 IWD_DNS=systemd
 
-BASE=(base linux linux-firmware btrfs-progs dosfstools sudo iwd niri kitty xwayland-satellite
+BASE=(base linux linux-firmware dosfstools sudo iwd niri kitty xwayland-satellite
 	xdg-desktop-portal-gnome noto-fonts base-devel git efibootmgr
 	dkms clang lld llvm bc pahole cpio perl openssl zstd curl)
+FS_PKG_btrfs=btrfs-progs
+FS_PKG_xfs=xfsprogs
 UCODE_INTEL=intel-ucode
 UCODE_AMD=amd-ucode
 AUR_BASE=(ungoogled-chromium-bin)
@@ -41,6 +43,7 @@ EXTRAS=(
 os_live_tools() {
 	command -v dialog >/dev/null || pacman -Sy --noconfirm dialog >/dev/null
 	command -v arch-chroot >/dev/null || pacman -Sy --noconfirm arch-install-scripts >/dev/null
+	command -v mkfs.xfs >/dev/null || pacman -Sy --noconfirm xfsprogs >/dev/null
 }
 
 os_chroot() { arch-chroot "$MNT" "$@"; }

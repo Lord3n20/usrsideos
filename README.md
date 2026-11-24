@@ -23,13 +23,14 @@ Boot the ISO of the base system in **UEFI mode**, connect to the internet, then:
 | Gentoo minimal (experimental) | `wget https://github.com/Lord3n20/usrsideos/archive/main.tar.gz && tar xf main.tar.gz && usrsideos-main/install` |
 
 Set disk, user etc. in the menu, then **Install**. The disk is erased completely:
-1 GiB EFI partition and the rest as btrfs (`@`, `@home`, zstd compression).
+1 GiB EFI partition and the rest as the root filesystem (default btrfs with `@`, `@home`, zstd, see below).
 
 | Menu entry | What happens |
 |---|---|
 | Autologin + niri | tty1 logs in by itself and starts niri |
 | hopd | only the selected parts are compiled in; values (watts, brightness, panel) are asked for |
 | Extra packages | sound, waybar, fuzzel, mako, lock screen, Bluetooth, NVIDIA … or your own packages (Arch: prefix `aur:` = AUR) |
+| Filesystem | btrfs (subvolumes, compression) or XFS, see [Filesystem](#filesystem) |
 | Build usrkrnl | kernel with only this machine's drivers, BORE, clang ThinLTO, no initramfs (10–40 min) |
 
 | | Arch | Void | Gentoo |
@@ -45,6 +46,20 @@ The installer keeps a copy of this repository in `~/usrsideos` for later rebuild
 
 Unattended installs (for tests): `install --answers FILE`, where FILE sets `DISK`, `USERNAME`, `PASSWORD`
 and optionally any other variable from the top of `install` (e.g. `USRKRNL=0`).
+
+## Filesystem
+
+The EFI partition is always vfat. For the root partition you choose in the menu (or in the answers file):
+
+| Setting | Values | Default |
+|---|---|---|
+| `FS` | `btrfs`, `xfs` | `btrfs` |
+| `BTRFS_SUBVOLS` | besides `@` (root) any of `@home` `@var_log` (/var/log) `@cache` (/var/cache) `@snapshots` (/.snapshots), or `flat` for no subvolumes | `@home` |
+| `BTRFS_COMPRESS` | `zstd:1` … `zstd:15`, `lzo`, `none` | `zstd:1` |
+
+Mount options are always `noatime`; btrfs also gets `discard=async` on SSDs (`lsblk` ROTA 0).
+Only the tools of the chosen filesystem are installed (btrfs-progs or xfsprogs).
+usrkrnl has no initramfs, so it builds the root filesystem into the kernel (`CONFIG_BTRFS_FS=y` or `CONFIG_XFS_FS=y`).
 
 ## Booting
 

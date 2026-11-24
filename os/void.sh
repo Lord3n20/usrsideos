@@ -10,10 +10,12 @@ SESSION_CMD="exec dbus-run-session niri --session"
 IWD_DNS=resolvconf
 VOID_REPO=https://repo-default.voidlinux.org/current
 
-BASE=(base-system linux linux-firmware dracut void-repo-nonfree btrfs-progs dosfstools sudo
+BASE=(base-system linux linux-firmware dracut void-repo-nonfree dosfstools sudo
 	iwd openresolv dbus elogind chrony niri kitty xwayland-satellite xdg-desktop-portal-gnome
 	noto-fonts-ttf chromium base-devel git efibootmgr dkms
 	clang lld llvm bc flex bison pahole cpio perl openssl-devel elfutils-devel zstd curl patch xz)
+FS_PKG_btrfs=btrfs-progs
+FS_PKG_xfs=xfsprogs
 UCODE_INTEL=intel-ucode
 UCODE_AMD=linux-firmware-amd
 
@@ -47,6 +49,7 @@ os_live_tools() {
 	local need=()
 	command -v dialog >/dev/null || need+=(dialog)
 	command -v mkfs.btrfs >/dev/null || need+=(btrfs-progs)
+	command -v mkfs.xfs >/dev/null || need+=(xfsprogs)
 	command -v mkfs.fat >/dev/null || need+=(dosfstools)
 	((${#need[@]} == 0)) || xbps-install -Sy "${need[@]}" >/dev/null
 }
