@@ -13,7 +13,9 @@
 #
 # Works on any distribution (package hints for Arch, Void and Gentoo).
 # Run it as a normal user; sudo or doas is used only for the install steps.
-set -euo pipefail
+set -Eeuo pipefail
+# set -e alone ends the script without a word; say where it stopped
+trap 'echo "usrkrnl/setup: unexpected error in line $LINENO: $BASH_COMMAND" >&2' ERR
 
 KVER=7.3.5
 SELF=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
@@ -411,14 +413,20 @@ sync
 msg "Kernel image: $ESP/EFI/usrkrnl/vmlinuz-usr.efi"
 
 command -v efibootmgr >/dev/null || die "efibootmgr missing, cannot create a boot entry"
-entry=$(efibootmgr | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | awk 'NR == 1')
+# number of the usrkrnl entry, empty if there is none. One awk without grep: with pipefail a
+# grep that finds nothing (first installation) would end the script silently through set -e
+usrkrnl_entry() {
+	efibootmgr -v | awk 'index(tolower($0), "efi\\usrkrnl\\vmlinuz-usr.efi") && $1 ~ /^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/ && !n++ { print substr($1, 5, 4) }'
+}
+entry=$(usrkrnl_entry)
 if [[ -z $entry ]]; then
 	espdev=$(findmnt -no SOURCE "$ESP")
 	disk=/dev/$(lsblk -no PKNAME "$espdev")
 	part=$(<"/sys/class/block/$(basename "$espdev")/partition")
 	order=$(efibootmgr | awk '/^BootOrder/ { print $2 }')
 	$SUDO efibootmgr -q -c -d "$disk" -p "$part" -L "$LABEL" -l "$IMG"
-	entry=$(efibootmgr | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | awk 'NR == 1')
+	entry=$(usrkrnl_entry)
+	[[ -n $entry ]] || die "UEFI entry \"$LABEL\" was not created (efibootmgr -c)"
 	# keep the old boot order: usrkrnl is only tried on demand until you decide otherwise
 	[[ -n $order ]] && $SUDO efibootmgr -q -o "$order"
 	msg "UEFI entry Boot$entry \"$LABEL\" created (not in BootOrder)"

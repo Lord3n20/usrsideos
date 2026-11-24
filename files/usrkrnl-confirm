@@ -3,7 +3,7 @@
 # If the machine booted the distribution kernel instead (usrkrnl broken), nothing changes.
 set -eu
 case $(uname -r) in *-usr) ;; *) exit 0 ;; esac
-new=$(efibootmgr | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | head -n1)
+new=$(efibootmgr -v | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | head -n1)
 [ -n "$new" ] || exit 0
 old=$(efibootmgr | awk '/^BootOrder/ { print $2 }' | tr ',' '\n' | grep -vix "$new" | paste -sd, -)
 efibootmgr -q -o "$new${old:+,$old}"
