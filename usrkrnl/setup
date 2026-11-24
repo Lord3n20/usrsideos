@@ -256,7 +256,7 @@ add_mod() {
 	[[ -n $m && -z ${seen[$m]:-} ]] || return 0
 	seen[$m]=1
 	want+=("$m")
-	for d in $(modinfo -F depends "$m" 2>/dev/null | tr ',' ' '); do add_mod "$d"; done
+	for d in $(modinfo -F depends "$m" 2>/dev/null | tr ',' ' ' || true); do add_mod "$d"; done
 	for d in $(modinfo -F softdep "$m" 2>/dev/null | tr ' ' '\n' | grep -v ':$' || true); do add_mod "$d"; done
 }
 add_mod "$fstype"
