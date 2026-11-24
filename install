@@ -61,6 +61,7 @@ H_BRIGHT_BAT=40 H_PANEL=eDP-1 H_MODE_AC="" H_MODE_BAT="" H_ECORES=0
 # ---------------------------------------------------------------- helpers
 ERRFILE=/tmp/usrsideos-error
 NOTEFILE=/tmp/usrsideos-notes
+SUDO_TMP=99-installer   # passwordless sudo for the user, only while installing
 # during the installation stdout belongs to the progress gauge: everything else goes to the log
 log()  { printf '\n==> %s\n' "$*" >>"$LOG"; }
 die()  { log "ERROR: $*"; echo "$*" >"$ERRFILE"; echo "ERROR: $*" >&2; exit 1; }
@@ -302,8 +303,10 @@ base_system() {
 	fi
 	mkdir -p "$MNT/etc/sudoers.d"
 	echo '%wheel ALL=(ALL:ALL) ALL' >"$MNT/etc/sudoers.d/10-wheel"
-	# only during the installation: package builds and usrkrnl without password
-	echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" >"$MNT/etc/sudoers.d/00-installer"
+	# only during the installation: package builds and usrkrnl without password. sudo applies the
+	# LAST matching rule and reads sudoers.d in lexical order, so this must sort after 10-wheel.
+	# install_all removes it on every exit, also after an abort.
+	echo "$USERNAME ALL=(ALL:ALL) NOPASSWD: ALL" >"$MNT/etc/sudoers.d/$SUDO_TMP"
 	chmod 440 "$MNT"/etc/sudoers.d/*
 
 	# network: iwd does DHCP itself, DNS via systemd-resolved or openresolv; take over Wi-Fi known to iwd on the ISO
@@ -425,7 +428,7 @@ kernel() {
 }
 
 cleanup() {
-	rm -f "$MNT/etc/sudoers.d/00-installer"
+	rm -f "$MNT/etc/sudoers.d/$SUDO_TMP"
 	os_finish
 	cp "$LOG" "$MNT/var/log/usrsideos-install.log"
 	sync
@@ -436,6 +439,8 @@ install_all() {
 	(
 		set -eE
 		trap 'echo "Unexpected error in line $LINENO: $BASH_COMMAND" >"$ERRFILE"' ERR
+		# never leave passwordless sudo in the target, also when the installation aborts
+		trap 'rm -f "$MNT/etc/sudoers.d/$SUDO_TMP"' EXIT
 		step 5 "Preparing the disk …";       partition
 		step 15 "Installing $OS_NAME …";      packages
 		step 45 "Setting up the system …";   base_system
