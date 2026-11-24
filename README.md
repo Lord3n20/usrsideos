@@ -5,8 +5,8 @@ tailored to the machine during installation. It got made by vibe-coding a lot of
 
 **Base system:** Arch Linux, Void Linux or Gentoo – the installer detects it from the ISO you boot.
 
-> **Void and Gentoo are experimental and untested.** Only the Arch backend has passed a full test
-> installation so far; on a Void or Gentoo ISO the installer asks before it continues.
+> **Gentoo is experimental and untested.** Arch and Void have passed full test installations;
+> on a Gentoo ISO the installer asks before it continues.
 
 **Always installed:** base system, kernel + firmware + microcode, sudo, efibootmgr, git, the tools of the
 root filesystem and the network (iwd for Wi-Fi, DHCP for cable). Everything else is chosen in the
@@ -19,7 +19,7 @@ Boot the ISO of the base system in **UEFI mode**, connect to the internet, then:
 | ISO | Commands |
 |---|---|
 | Arch | `pacman -Sy --noconfirm git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
-| Void (glibc, experimental) | `xbps-install -Sy git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
+| Void (glibc) | `xbps-install -Sy git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
 | Gentoo minimal (experimental) | `wget https://github.com/Lord3n20/usrsideos/archive/main.tar.gz && tar xf main.tar.gz && usrsideos-main/install` |
 
 Set disk, user etc. in the menu, then **Install**. The disk is erased completely:

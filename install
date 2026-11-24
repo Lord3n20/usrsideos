@@ -817,10 +817,10 @@ requirements
 hopd_values
 # backends without a green VM test yet; remove an ID here once its test has passed
 case $OS in
-	void|gentoo)
+	gentoo)
 		log "NOTE: the $OS_NAME backend is experimental and untested"
 		if [[ -z $ANSWERS ]]; then
-			dlg --title "Experimental" --defaultno --yesno "The $OS_NAME backend is experimental and untested.\n\nThe installation may fail or leave an unbootable system. Only the Arch backend has been tested so far.\n\nContinue anyway?" 12 70 || exit 0
+			dlg --title "Experimental" --defaultno --yesno "The $OS_NAME backend is experimental and untested.\n\nThe installation may fail or leave an unbootable system. Only the Arch and Void backends have been tested so far.\n\nContinue anyway?" 12 70 || exit 0
 		fi ;;
 esac
 if [[ -n $ANSWERS ]]; then
