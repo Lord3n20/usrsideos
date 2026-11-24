@@ -44,6 +44,8 @@ Everything distribution specific lives in `os/<id>.sh`; `install` itself is shar
 The installer keeps a copy of this repository in `~/usrsideos` for later rebuilds.
 `fastfetch` shows the small UsrsideOS logo; the big one: `fastfetch --logo /usr/share/usrsideos/logo.txt --logo-color-1 37 --logo-color-2 96`.
 
+Defaults are a German setup: `KEYMAP=de-latin1`, `LOCALE=de_DE.UTF-8`, `TIMEZONE=Europe/Berlin`; change them in the menu or set them in the answers file.
+
 Unattended installs (for tests): `install --answers FILE`, where FILE sets `DISK`, `USERNAME`, `PASSWORD`
 and optionally any other variable from the top of `install` (e.g. `USRKRNL=0`).
 

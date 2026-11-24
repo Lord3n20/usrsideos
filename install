@@ -462,7 +462,10 @@ EOF
 }
 
 build_hopd() {
-	((H_STROM || H_AKKULOG || H_LUEFTER || H_EGPU || H_NIRI)) || return 0
+	if ! ((H_STROM || H_AKKULOG || H_LUEFTER || H_EGPU || H_NIRI)); then
+		warn "hopd: no part selected, not installed (later: ~/usrsideos/hopd, see README)"
+		return 0
+	fi
 	log "Building hopd"
 	local b=$MNT/usr/local/src/hopd
 	mkdir -p "$b"; cp -r "$HERE/hopd/." "$b/"
