@@ -73,7 +73,17 @@ os_locale() {
 
 os_enable() { in_target systemctl enable "$@"; }
 
-os_services() { os_enable iwd systemd-resolved systemd-timesyncd; }
+# iwd only handles Wi-Fi; wired interfaces get DHCP from systemd-networkd (DNS via resolved)
+os_services() {
+	install -Dm644 /dev/stdin "$MNT/etc/systemd/network/20-wired.network" <<'EOF'
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=yes
+EOF
+	os_enable iwd systemd-networkd systemd-resolved systemd-timesyncd
+}
 
 os_autologin() {
 	mkdir -p "$MNT/etc/systemd/system/getty@tty1.service.d"

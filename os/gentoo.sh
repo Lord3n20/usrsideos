@@ -15,7 +15,7 @@ STAGE3_BASE=https://distfiles.gentoo.org/releases/amd64/autobuilds
 STAGE3_LIST=latest-stage3-amd64-desktop-openrc.txt
 
 BASE=(sys-kernel/gentoo-kernel-bin sys-kernel/linux-firmware sys-kernel/installkernel
-	sys-fs/btrfs-progs sys-fs/dosfstools app-admin/sudo net-wireless/iwd net-dns/openresolv
+	sys-fs/btrfs-progs sys-fs/dosfstools app-admin/sudo net-wireless/iwd net-misc/dhcpcd net-dns/openresolv
 	sys-auth/elogind sys-apps/dbus net-misc/chrony gui-wm/niri x11-terms/kitty
 	gui-apps/xwayland-satellite sys-apps/xdg-desktop-portal-gnome media-fonts/noto
 	www-client/ungoogled-chromium-bin dev-vcs/git sys-boot/efibootmgr
@@ -121,7 +121,9 @@ os_enable() { local s; for s; do in_target rc-update add "$s" default; done; }
 
 os_services() {
 	in_target rc-update add elogind boot
-	os_enable dbus iwd chronyd
+	# iwd only handles Wi-Fi; dhcpcd only for wired interfaces, DNS via openresolv
+	printf '\n# UsrsideOS: Wi-Fi is configured by iwd\nallowinterfaces en* eth*\n' >>"$MNT/etc/dhcpcd.conf"
+	os_enable dbus iwd chronyd dhcpcd
 }
 
 os_autologin() {

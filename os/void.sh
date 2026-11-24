@@ -81,7 +81,11 @@ os_locale() {
 # runit: a service is enabled by a link in the default runlevel
 os_enable() { local s; for s; do ln -sfn "/etc/sv/$s" "$MNT/etc/runit/runsvdir/default/$s"; done; }
 
-os_services() { os_enable dbus elogind iwd chronyd; }
+# iwd only handles Wi-Fi; dhcpcd (part of base-system) only for wired interfaces, DNS via openresolv
+os_services() {
+	printf '\n# UsrsideOS: Wi-Fi is configured by iwd\nallowinterfaces en* eth*\n' >>"$MNT/etc/dhcpcd.conf"
+	os_enable dbus elogind iwd chronyd dhcpcd
+}
 
 os_autologin() {
 	# new service dir (agetty-generic/run takes the tty from the dir name); the stock conf sets
