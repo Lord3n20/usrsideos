@@ -55,6 +55,8 @@ os_bootstrap() {
 	# tests: an extra read-only cache; pacman downloads into the first writable --cachedir
 	local cache=()
 	[[ -n $TEST_CACHEDIR ]] && cache=(--cachedir="$MNT/var/cache/pacman/pkg" --cachedir="$TEST_CACHEDIR")
+	# before pacstrap: mkinitcpio (sd-vconsole) runs during it and puts the keymap into the initramfs
+	install -Dm644 /dev/stdin "$MNT/etc/vconsole.conf" <<<"KEYMAP=$KEYMAP"
 	if ! pacstrap -K "$MNT" "${REPO[@]}" "${cache[@]}" >>"$LOG" 2>&1; then
 		log "pacstrap failed, refreshing mirrors and retrying once"
 		if command -v reflector >/dev/null; then
@@ -71,6 +73,14 @@ os_locale() {
 	in_target locale-gen
 	echo "LANG=$LOCALE" >"$MNT/etc/locale.conf"
 	echo "KEYMAP=$KEYMAP" >"$MNT/etc/vconsole.conf"
+	# udev starts systemd-vconsole-setup again when the GPU driver appears; by then niri may hold
+	# tty1 in graphics mode and loadkeys fails with EIO. The keymap is already set (initramfs, or
+	# the first run before getty with usrkrnl), so that late failure must not mark the unit failed.
+	install -Dm644 /dev/stdin "$MNT/etc/systemd/system/systemd-vconsole-setup.service.d/10-usrside.conf" <<'EOF2'
+[Service]
+ExecStart=
+ExecStart=-/usr/lib/systemd/systemd-vconsole-setup
+EOF2
 	echo "$HOSTNAME_" >"$MNT/etc/hostname"
 }
 
