@@ -127,6 +127,10 @@ usrkrnl has no initramfs, so it builds the root filesystem into the kernel (`CON
 
 - The distribution kernel (with initramfs) is always there as the fallback entry
   "UsrsideOS (linux|void|gentoo kernel)"; a kernel hook keeps it under a fixed name in `/boot`.
+- `/boot` is the 1 GiB EFI partition. Void and Gentoo get a host-only initramfs, and their kernel
+  hook removes old kernels (Void: those no package owns any more, Gentoo: all but the two newest);
+  the running kernel always stays. On Void do not run `vkpurge rm all`: it would also delete the
+  fixed-name copy `vmlinuz-void` (the next kernel update creates it again).
 - The first reboot uses usrkrnl **once**. If it boots, `usrkrnl-confirm` makes it the default.
   If it does not, the next boot uses the distribution kernel again.
 - New hardware later? Plug the device in, use it, then run `~/usrsideos/usrkrnl/setup`.
