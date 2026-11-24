@@ -69,7 +69,7 @@ log()  { printf '\n==> %s\n' "$*" >>"$LOG"; }
 stirb() { log "FEHLER: $*"; echo "$*" >"$FEHLER"; echo "FEHLER: $*" >&2; exit 1; }
 dlg()  { dialog --backtitle "$TITEL" "$@" 3>&1 1>&2 2>&3; }
 in_ziel() { arch-chroot "$MNT" "$@" >>"$LOG" 2>&1; }
-als_nutzer() { arch-chroot "$MNT" runuser -u "$NUTZER" -- bash -c "$1" >>"$LOG" 2>&1; }
+als_nutzer() { arch-chroot "$MNT" runuser -l "$NUTZER" -c "$1" >>"$LOG" 2>&1; }
 
 voraussetzungen() {
 	((EUID == 0)) || { echo "Bitte als root im Arch-ISO starten." >&2; exit 1; }
@@ -106,8 +106,9 @@ hopd_vorgaben() {
 
 # ---------------------------------------------------------------- Menüpunkte
 m_festplatte() {
-	local liste=() n g m
-	while read -r n g m; do liste+=("$n" "$g ${m:-}"); done < <(lsblk -dpno NAME,SIZE,MODEL -e 7,11)
+	local liste=() n g m iso
+	iso=$(lsblk -npo PKNAME "$(findmnt -no SOURCE /run/archiso/bootmnt 2>/dev/null)" 2>/dev/null || true)
+	while read -r n g m; do [[ $n == "$iso" ]] || liste+=("$n" "$g ${m:-}"); done < <(lsblk -dpno NAME,SIZE,MODEL -e 7,11)
 	((${#liste[@]})) || stirb "Keine Festplatte gefunden."
 	DISK=$(dlg --title "Festplatte" --menu "Ziel wählen. ALLE DATEN DARAUF WERDEN GELÖSCHT.\n\nAufteilung: 1 GiB EFI + Rest btrfs (@, @home).\nOhne Verschlüsselung: usrkrnl startet ohne initramfs." 18 72 8 "${liste[@]}") || true
 }
@@ -182,6 +183,8 @@ m_hopd() {
 	mapfile -t w <<<"$werte"
 	H_PL1_NETZ=${w[0]//[^0-9]/} H_PL2_NETZ=${w[1]//[^0-9]/} H_PL1_AKKU=${w[2]//[^0-9]/} H_PL2_AKKU=${w[3]//[^0-9-]/}
 	H_HELL_AKKU=${w[4]//[^0-9-]/} H_PANEL=${w[5]//[^A-Za-z0-9-]/} H_MODUS_NETZ=${w[6]//[^0-9x@.]/} H_MODUS_AKKU=${w[7]//[^0-9x@.]/} H_NUR_E=${w[8]//[^01]/}
+	# leer gelassene Felder: wieder die Vorgaben
+	: "${H_PL1_NETZ:=45}" "${H_PL2_NETZ:=64}" "${H_PL1_AKKU:=12}" "${H_PL2_AKKU:=20}" "${H_HELL_AKKU:=-1}" "${H_PANEL:=eDP-1}" "${H_NUR_E:=0}"
 }
 
 an_aus() { (($1)) && echo an || echo aus; }
@@ -275,7 +278,6 @@ grundsystem() {
 	printf '[General]\nEnableNetworkConfiguration=true\n\n[Network]\nNameResolvingService=systemd\n' >"$MNT/etc/iwd/main.conf"
 	cp -a /var/lib/iwd/. "$MNT/var/lib/iwd/" 2>/dev/null || true
 	in_ziel systemctl enable iwd systemd-resolved systemd-timesyncd
-	ln -sf ../run/systemd/resolve/stub-resolv.conf "$MNT/etc/resolv.conf"
 
 	# Name, Logo
 	install -Dm644 "$HIER/dateien/usrside-logo.svg" "$MNT/usr/share/icons/hicolor/scalable/apps/usrside-logo.svg"
@@ -342,7 +344,7 @@ hopd_bauen() {
 
 kernel() {
 	log "Boot-Einträge"
-	local disk part order
+	local disk part
 	disk=/dev/$(lsblk -no PKNAME "$ESP"); part=$(<"/sys/class/block/$(basename "$ESP")/partition")
 	# Notfall: Arch-Kernel mit initramfs, direkt per EFI-Stub
 	efibootmgr -q -c -d "$disk" -p "$part" -L "UsrsideOS (Arch-Kernel)" -l '\vmlinuz-linux' \
@@ -367,12 +369,17 @@ kernel() {
 
 aufraeumen() {
 	rm -f "$MNT/etc/sudoers.d/00-installer"
+	ln -sf ../run/systemd/resolve/stub-resolv.conf "$MNT/etc/resolv.conf"   # erst jetzt: der chroot brauchte das DNS des ISO
 	cp "$LOG" "$MNT/var/log/usrsideos-install.log"
 	sync
 }
 
 installieren() {
+	local st
+	set +e
 	(
+		set -eE
+		trap 'echo "Unerwarteter Fehler in Zeile $LINENO: $BASH_COMMAND" >"$FEHLER"' ERR
 		schritt 5 "Festplatte vorbereiten …";   partitionieren
 		schritt 15 "Pakete installieren …";     pakete
 		schritt 45 "System einrichten …";       grundsystem
@@ -383,10 +390,14 @@ installieren() {
 		schritt 98 "Aufräumen …";               aufraeumen
 		schritt 100 "Fertig."
 	) | dialog --backtitle "$TITEL" --title "Installation" --gauge "Los geht's …" 9 70 0
-	if [[ ${PIPESTATUS[0]} != 0 ]]; then
+	st=${PIPESTATUS[0]}
+	set -e
+	if [[ $st != 0 ]]; then
 		dlg --title "Fehler" --msgbox "Installation abgebrochen:\n$(cat "$FEHLER" 2>/dev/null)\n\nProtokoll: $LOG" 12 70; exit 1
 	fi
-	[[ -e /tmp/usrsideos-ohne-usrkrnl ]] && dlg --msgbox "usrkrnl ließ sich nicht bauen – UsrsideOS startet mit dem Arch-Kernel.\nSpäter erneut: cd ~/usrkrnl && usrkrnl/setup\n\nProtokoll: /var/log/usrsideos-install.log" 10 70
+	if [[ -e /tmp/usrsideos-ohne-usrkrnl ]]; then
+		dlg --msgbox "usrkrnl ließ sich nicht bauen – UsrsideOS startet mit dem Arch-Kernel.\nSpäter erneut: cd ~/usrkrnl && usrkrnl/setup\n\nProtokoll: /var/log/usrsideos-install.log" 10 70
+	fi
 	dlg --msgbox "UsrsideOS ist installiert.\n\nUSB-Stick abziehen und neu starten (reboot).\nDer erste Start nimmt usrkrnl; klappt er, wird usrkrnl Standard.\nSonst startet beim nächsten Mal der Arch-Kernel." 12 66
 }
 
