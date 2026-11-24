@@ -63,13 +63,13 @@ Every option can be switched on its own; what an option needs is switched on aut
 (waybar, rofi, mako, lock screen, polkit agent and swaybg need the niri desktop, the PulseAudio Bluetooth
 module needs sound and Bluetooth, AUR packages need yay). Answers-file key = the key in capitals.
 
-| Key | Option | `desktop` | Arch | Void | Gentoo |
+| Key | Option | `desktop` | Arch | Void | Gentoo (untested⁴) |
 |---|---|---|---|---|---|
 | `desktop` | niri, kitty, xwayland-satellite, xdg-desktop-portal-gnome, wl-clipboard, Noto/DejaVu/Liberation fonts | ✓ | ✓ | ✓ | ✓ |
 | `waybar` | top bar | ✓ | ✓ | ✓ | ✓ |
 | `rofi` | app launcher on Mod+Space (replaces fuzzel on Mod+D) | ✓ | ✓ | ✓ | ✓ |
 | `mako` | notifications | ✓ | ✓ | ✓ | ✓ |
-| `lock` | lock screen on Mod+L + idle lock after 10 min (focus right stays on Mod+Right) | ✓ | hyprlock + swayidle | swaylock + swayidle¹ | hyprlock + swayidle |
+| `lock` | lock screen on Mod+L + idle lock after 10 min, see [niri keys](#niri-keys) | ✓ | hyprlock + swayidle | swaylock + swayidle¹ | hyprlock + swayidle |
 | `polkit` | polkit agent | ✓ | hyprpolkitagent | polkit-gnome¹ | polkit-gnome |
 | `swaybg` | plain wallpaper colour | ✓ | ✓ | ✓ | ✓ |
 | `sound` | PulseAudio + pulsemixer (+ sof-firmware) | ✓ | ✓ | ✓ | ✓ |
@@ -87,10 +87,22 @@ module needs sound and Bluetooth, AUR packages need yay). Answers-file key = the
 | `fish` `office` `latex` | fish shell, LibreOffice, TeX Live base | | ✓ | ✓ | ✓ |
 | `games` | Steam + MangoHud (enables multilib) | | ✓ | –³ | –³ |
 
-¹ hyprlock and hyprpolkitagent are not packaged for Void. The lid lock of the hopd niri part uses hyprlock,
-so on Void only the idle lock (swayidle) and Mod+L lock.
+¹ hyprlock and hyprpolkitagent are not packaged for Void; the hopd niri part locks with swaylock there too.
 ² part of PulseAudio itself (Void) or its `bluetooth` USE flag (Gentoo).
 ³ Steam needs the multilib repositories (Void) or the steam-overlay (Gentoo); set them up yourself.
+⁴ the Gentoo package atoms are checked in the Gentoo test phase.
+
+### niri keys
+
+UsrsideOS changes a few keys of niri's default config:
+
+| Key | Default niri | UsrsideOS |
+|---|---|---|
+| Mod+Space | (switch keyboard layout, commented out) | app launcher (rofi), with `rofi` |
+| Mod+D | app launcher (fuzzel) | focus column right, with `lock` |
+| Mod+A | – | focus column left, with `lock` |
+| Mod+L | focus column right | lock screen, with `lock` (Mod+Right still moves right) |
+| Super+Alt+L | swaylock | moved to Mod+L |
 
 Sound is PulseAudio. PipeWire may still come in as a dependency of the portal (screen sharing), but
 WirePlumber is configured not to touch the sound cards and nothing provides the pulse socket.

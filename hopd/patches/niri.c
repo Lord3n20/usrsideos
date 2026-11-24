@@ -142,13 +142,16 @@ static int sitzung(int argc, char **argv)
 
 static int schein_aus(int argc, char **argv)
 {
-	if (!n_laeuft("hyprlock")) n_los((char *const[]){ "hyprlock", "--no-fade-in", NULL }, NULL);
+	if (!n_laeuft(niri_sperre)) {
+		if (!strcmp(niri_sperre, "hyprlock")) n_los((char *const[]){ (char *)niri_sperre, "--no-fade-in", NULL }, NULL);
+		else n_los((char *const[]){ (char *)niri_sperre, NULL }, NULL);
+	}
 	schlaf(0.7);
 	STARTE("niri", "msg", "action", "power-off-monitors");
-	/* geweckt: hyprlock zeigt die Passworteingabe, nach 3 s ohne Eingabe wieder aus */
+	/* geweckt: die Sperre zeigt die Passworteingabe, nach 3 s ohne Eingabe wieder aus */
 	pid_t idle = n_los((char *const[]){ "swayidle", "timeout", "3", "niri msg action power-off-monitors", NULL }, NULL);
 	if (trocken) return 0;
-	while (n_laeuft("hyprlock")) schlaf(1);
+	while (n_laeuft(niri_sperre)) schlaf(1);
 	if (idle > 0) kill(-idle, SIGTERM);
 	return 0;
 }

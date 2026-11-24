@@ -110,7 +110,8 @@ OPTIONS=(
 	latex       ""                 off "LaTeX (TeX Live base)"
 )
 declare -A SEL=()   # option key -> 0/1
-RESOLVED=""
+declare -A EXPL=()  # keys chosen explicitly (answers file, changed in the menu) -> 1
+RESOLVED="" CONFLICT=""
 
 # ---------------------------------------------------------------- helpers
 ERRFILE=/tmp/usrsideos-error
@@ -253,12 +254,14 @@ opt_label() {
 	case $1 in browser) echo "${OPTIONS[i+3]} ($BROWSER_NAME)" ;; *) echo "${OPTIONS[i+3]}" ;; esac
 }
 
-# $1 minimal|desktop, $2 force (menu: overwrite everything) or fill (answers: only what is still empty)
+# $1 minimal|desktop, $2 force (menu: overwrite everything) or fill (answers: keep what the file
+# set, those keys count as explicitly chosen)
 apply_profile() {
 	local p=$1 mode=$2 i k v var
+	EXPL=()
 	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
 		k=${OPTIONS[i]} var=${k^^}
-		if [[ $mode == fill && -n ${!var:-} ]]; then SEL[$k]=${!var}; continue; fi
+		if [[ $mode == fill && -n ${!var:-} ]]; then SEL[$k]=${!var} EXPL[$k]=1; continue; fi
 		v=0
 		if [[ $p == desktop ]]; then
 			case ${OPTIONS[i+2]} in on) v=1 ;; hw) hw_present "$k" && v=1 ;; esac
@@ -266,6 +269,8 @@ apply_profile() {
 		SEL[$k]=$v
 	done
 	if [[ $mode == force ]]; then AUTOLOGIN="" USRKRNL="" H_STROM="" H_AKKULOG="" H_LUEFTER="" H_EGPU="" H_NIRI=""; fi
+	[[ -z $AUTOLOGIN ]] || EXPL[autologin]=1
+	[[ -z $H_NIRI ]] || EXPL[h_niri]=1
 	if [[ $p == desktop ]]; then
 		: "${AUTOLOGIN:=1}" "${H_NIRI:=1}"
 		hopd_defaults
@@ -274,28 +279,64 @@ apply_profile() {
 	PROFILE=$p
 }
 
-# switches on what the selection needs (waybar -> niri desktop, AUR packages -> yay …), switches off
-# what this backend does not have; RESOLVED gets one line per automatic change. Not in $(…): a
-# subshell would lose the changes to SEL
+# state of an option or of the pseudo options autologin, h_niri (hopd niri part), extra_aur
+st_on() {
+	case $1 in
+		autologin) ((AUTOLOGIN)) ;; h_niri) ((H_NIRI)) ;; extra_aur) ((${#EXTRA_AUR[@]})) ;; *) opt_on "$1" ;;
+	esac
+}
+st_set() {   # $1 key, $2 0/1 (extra_aur is never switched)
+	case $1 in autologin) AUTOLOGIN=$2 ;; h_niri) H_NIRI=$2 ;; extra_aur) ;; *) SEL[$1]=$2 ;; esac
+}
+st_label() {
+	local l
+	case $1 in
+		autologin) echo "autologin + niri" ;; h_niri) echo "hopd niri part" ;; extra_aur) echo "the aur: packages" ;; *) l=$(opt_label "$1"); echo "${l%% (*}" ;;
+	esac
+}
+# "needs" relations: option requirements, AUR packages -> yay, autologin/hopd niri part -> desktop
+st_edges() {
+	local i k r
+	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
+		k=${OPTIONS[i]}
+		for r in ${OPTIONS[i+1]}; do echo "$k $r"; done
+		[[ -z ${AUR[$k]:-} ]] || echo "$k yay"
+	done
+	echo "autologin desktop"; echo "h_niri desktop"; echo "extra_aur yay"
+}
+
+# Makes the selection consistent. An explicitly chosen value (answers key, change in the menu) always
+# wins against a profile value: an option that needs something explicitly switched off is switched
+# off too (DESKTOP=0 in the desktop profile drops waybar, autologin …); otherwise the missing part is
+# switched on (WAYBAR=1 in the minimal profile brings niri). Both explicit = CONFLICT.
+# RESOLVED/CONFLICT: one line per change/contradiction. Not in $(…): a subshell would lose SEL.
 resolve_options() {
-	local i k r changed=1
-	RESOLVED=""
-	((AUTOLOGIN || H_NIRI)) && ! opt_on desktop && { SEL[desktop]=1; RESOLVED+="niri desktop switched on (needed by autologin / hopd niri part)"$'\n'; }
-	if ((${#EXTRA_AUR[@]})) && ! opt_on yay; then SEL[yay]=1; RESOLVED+="yay switched on (needed by the AUR packages)"$'\n'; fi
+	local i k r changed=1 edges
+	RESOLVED="" CONFLICT=""
+	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
+		k=${OPTIONS[i]}
+		if opt_on "$k" && ! opt_avail "$k"; then
+			SEL[$k]=0
+			[[ -z ${EXPL[$k]:-} ]] || RESOLVED+="$(opt_label "$k"): not available on $OS_NAME"$'\n'
+		fi
+	done
+	edges=$(st_edges)
 	while ((changed)); do
 		changed=0
-		for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
-			k=${OPTIONS[i]}
-			opt_on "$k" || continue
-			if ! opt_avail "$k"; then SEL[$k]=0; continue; fi
-			for r in ${OPTIONS[i+1]}; do
-				opt_avail "$r" && ! opt_on "$r" && { SEL[$r]=1; changed=1; RESOLVED+="$(opt_label "$r") switched on (needed by: $(opt_label "$k"))"$'\n'; }
-			done
-			if [[ -n ${AUR[$k]:-} ]] && ! opt_on yay; then SEL[yay]=1; changed=1; RESOLVED+="yay switched on (needed by: $(opt_label "$k"))"$'\n'; fi
-		done
+		while read -r k r; do
+			if ! st_on "$k" || st_on "$r"; then continue; fi
+			if ! opt_avail "$r"; then
+				st_set "$k" 0; changed=1
+			elif [[ -n ${EXPL[$r]:-} && ( -n ${EXPL[$k]:-} || $k == extra_aur ) ]]; then
+				[[ $CONFLICT == *"$(st_label "$k") needs"* ]] || CONFLICT+="$(st_label "$k") needs $(st_label "$r"), but $(st_label "$r") is switched off"$'\n'
+			elif [[ -n ${EXPL[$r]:-} ]]; then
+				st_set "$k" 0; changed=1; RESOLVED+="$(st_label "$k") switched off ($(st_label "$r") is off)"$'\n'
+			else
+				st_set "$r" 1; changed=1; RESOLVED+="$(st_label "$r") switched on (needed by $(st_label "$k"))"$'\n'
+			fi
+		done <<<"$edges"
 	done
-	opt_on yay && ! opt_avail yay && SEL[yay]=0
-	RESOLVED=${RESOLVED%$'\n'}
+	RESOLVED=${RESOLVED%$'\n'} CONFLICT=${CONFLICT%$'\n'}
 	return 0
 }
 
@@ -329,11 +370,12 @@ m_user() {
 }
 m_autologin() {
 	if ! opt_on desktop; then
-		dlg --yesno "Autologin starts niri, but the niri desktop is not selected.\n\nSwitch the niri desktop on?" 9 64 || { AUTOLOGIN=0; return 0; }
-		SEL[desktop]=1
+		dlg --yesno "Autologin starts niri, but the niri desktop is not selected.\n\nSwitch the niri desktop on?" 9 64 || { AUTOLOGIN=0 EXPL[autologin]=1; return 0; }
+		SEL[desktop]=1 EXPL[desktop]=1
 	fi
 	if dlg --yesno "Log in automatically on tty1 and start niri?\n\n(The UsrsideOS way: power on → desktop. Locking is done by hyprlock/swaylock if installed.)" 10 64
 	then AUTOLOGIN=1; else AUTOLOGIN=0; fi
+	EXPL[autologin]=1
 }
 m_fs() {
 	local f s c
@@ -370,7 +412,7 @@ m_profile() {
 	apply_profile "$p" force
 }
 m_packages() {
-	local sel i k list=() free
+	local sel i k v list=() free
 	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
 		k=${OPTIONS[i]}
 		opt_avail "$k" || continue
@@ -379,7 +421,10 @@ m_packages() {
 	sel=$(dlg --separate-output --title "Packages" --checklist "Space = on/off. Needed parts are switched on automatically. Anything else can be installed later." 24 86 17 "${list[@]}") || return 0
 	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
 		k=${OPTIONS[i]}
-		if grep -qxF "$k" <<<"$sel"; then SEL[$k]=1; else SEL[$k]=0; fi
+		opt_avail "$k" || continue
+		if grep -qxF "$k" <<<"$sel"; then v=1; else v=0; fi
+		[[ $v == "${SEL[$k]:-0}" ]] || EXPL[$k]=1   # changed here = chosen explicitly
+		SEL[$k]=$v
 	done
 	free=$(dlg --inputbox "More packages (space separated; $FREE_HINT):" 9 78 "$(printf '%s ' "${EXTRA_REPO[@]}" "${EXTRA_AUR[@]/#/aur:}")") || free=""
 	EXTRA_REPO=() EXTRA_AUR=()
@@ -389,8 +434,7 @@ m_packages() {
 		else EXTRA_REPO+=("$p"); fi
 	done
 	resolve_options
-	if ! opt_on desktop; then AUTOLOGIN=0 H_NIRI=0; fi
-	[[ -z $RESOLVED ]] || dlg --title "Switched on automatically" --msgbox "$RESOLVED" 14 80
+	[[ -z $RESOLVED$CONFLICT ]] || dlg --title "Selection" --msgbox "${CONFLICT:+Contradiction, please change:\n$CONFLICT\n\n}$RESOLVED" 16 84
 }
 m_hopd() {
 	local sel list=() vals
@@ -407,6 +451,7 @@ m_hopd() {
 		v=0; grep -qx "$t" <<<"$sel" && v=1
 		case $t in strom) H_STROM=$v ;; akkulog) H_AKKULOG=$v ;; luefter) H_LUEFTER=$v ;; egpu) H_EGPU=$v ;; niri) H_NIRI=$v ;; esac
 	done
+	opt_on desktop && EXPL[h_niri]=1
 	((H_STROM || H_NIRI)) || return 0
 	vals=$(dlg --title "hopd – values" --form "Power in watts (Intel only, RAPL). Brightness -1 = leave alone.\nMode e.g. 2560x1600@60, empty = leave alone. Panel: niri name of the built-in screen." 20 78 9 \
 		"Long-term power on AC (PL1)"  1 1 "$H_PL1_AC" 1 34 6 4 \
@@ -440,10 +485,10 @@ main_menu() {
 			3 "Time zone:        $TIMEZONE" \
 			4 "Hostname:         $HOSTNAME_" \
 			5 "User:             ${USERNAME:-(create)}" \
-			6 "Autologin + niri: $(on_off $AUTOLOGIN)" \
+			6 "Autologin + niri: $(on_off "$AUTOLOGIN")" \
 			7 "hopd:             ${hparts:-off}" \
 			8 "Packages:         $n selected$(opt_on desktop && echo ", niri desktop")" \
-			9 "Build usrkrnl:    $(on_off $USRKRNL)" \
+			9 "Build usrkrnl:    $(on_off "$USRKRNL")" \
 			I "Install" \
 			Q "Cancel") || exit 0
 		case $choice in
@@ -461,8 +506,9 @@ ready() {
 	p=$(fs_problem)
 	[[ -z $p ]] || { dlg --msgbox "Filesystem settings:\n$p" 8 64; return 1; }
 	[[ -n $USERNAME ]] || { dlg --msgbox "Create a user first." 6 40; return 1; }
-	resolve_options; opt_on desktop || AUTOLOGIN=0 H_NIRI=0
-	[[ -z $RESOLVED ]] || dlg --title "Switched on automatically" --msgbox "$RESOLVED" 14 80
+	resolve_options
+	[[ -z $CONFLICT ]] || { dlg --title "Selection" --msgbox "Contradiction, please change:\n$CONFLICT" 12 84; return 1; }
+	[[ -z $RESOLVED ]] || dlg --title "Selection" --msgbox "$RESOLVED" 16 84
 	dlg --defaultno --yesno "Install $OS_NAME + UsrsideOS now?\n\n$DISK will be ERASED COMPLETELY." 9 54
 }
 
@@ -646,7 +692,9 @@ niri_config() {
 	if opt_on lock; then   # Mod+L locks (focus right stays on Mod+Right)
 		l=$LOCK_CMD
 		sed -i "s/^\\( *\\)Super+Alt+L hotkey-overlay-title=\"[^\"]*\" { spawn \"swaylock\"; }/\\1Mod+L hotkey-overlay-title=\"Lock the Screen: $l\" { spawn \"$l\"; }/" "$c"
-		sed -i 's/^\( *\)\(Mod+L *{ focus-column-right; }\)/\1\/\/ \2/' "$c"
+		# focus right moves to Mod+D (and stays on Mod+Right), Mod+A is focus left (as on the UsrsideOS laptop)
+		sed -i '/^ *Mod+D hotkey-overlay-title="[^"]*" { spawn "fuzzel"; }/d' "$c"
+		sed -i 's/^\( *\)\(Mod+L *{ focus-column-right; }\)/\1\/\/ \2\n\1Mod+A     { focus-column-left; }\n\1Mod+D     { focus-column-right; }/' "$c"
 		# idle lock; with the hopd niri part hopd also locks when the lid closes (hyprlock)
 		printf 'spawn-at-startup "swayidle" "timeout" "600" "pidof %s || %s" "before-sleep" "pidof %s || %s &"\n' "$l" "$l" "$l" "$l" >>"$c"
 	fi
@@ -674,6 +722,8 @@ build_hopd() {
 	sed -i "s/^\(static const int   strom_nur_e\[3\] *= \){[^}]*}/\1{ 0, $H_ECORES, 0 }/" "$c"
 	sed -i "s/^\(static const char \*strom_modus\[3\] *= \){[^}]*}/\1{ \"$H_MODE_AC\", \"$H_MODE_BAT\", \"$H_MODE_BAT\" }/" "$c"
 	sed -i "s/^\(static const char  strom_panel\[\] *= \)\"[^\"]*\"/\1\"$H_PANEL\"/; s/^\(static const char niri_panel\[\] = \)\"[^\"]*\"/\1\"$H_PANEL\"/" "$c"
+	# lid lock of the niri part: the chosen lock screen (Void has no hyprlock)
+	opt_on lock && sed -i "s/^\(static const char niri_sperre\[\] = \)\"[^\"]*\"/\1\"$LOCK_CMD\"/" "$c"
 	in_target make -s -C /usr/local/src/hopd || die "hopd could not be built"
 	in_target make -s -C /usr/local/src/hopd install PREFIX=/usr/local
 	os_hopd_service
@@ -783,8 +833,8 @@ if [[ -n $ANSWERS ]]; then
 	if [[ $OS != arch ]] && ((${#EXTRA_AUR[@]})); then log "--answers: EXTRA_AUR ignored (AUR only on Arch)"; EXTRA_AUR=(); fi
 	apply_profile "${PROFILE:-minimal}" fill
 	resolve_options
+	[[ -z $CONFLICT ]] || { log "--answers: $CONFLICT"; echo "--answers: $CONFLICT" >&2; exit 1; }
 	[[ -z $RESOLVED ]] || while IFS= read -r l; do log "--answers: $l"; done <<<"$RESOLVED"
-	opt_on desktop || AUTOLOGIN=0 H_NIRI=0
 	log "--answers: profile $PROFILE, options: $(for k in "${!SEL[@]}"; do ((SEL[$k])) && printf '%s ' "$k"; done)"
 	[[ -n $DISK && -n $USERNAME && -n $PASSWORD ]] || { echo "--answers: DISK, USERNAME and PASSWORD are required" >&2; exit 1; }
 	p=$(disk_problem "$DISK")

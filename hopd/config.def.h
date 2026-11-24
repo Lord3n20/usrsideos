@@ -59,5 +59,6 @@ static const int  akkulog_takt = 120; /* s */
 #if PATCH_NIRI
 /* ===== niri ===== */
 static const char niri_panel[] = "eDP-1";   /* Laptop-Panel: Deckel zu → aus @ */
+static const char niri_sperre[] = "hyprlock";   /* Sperrprogramm beim Zuklappen (hyprlock, swaylock …) @ */
 #endif
 
