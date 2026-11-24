@@ -439,7 +439,8 @@ desktop() {
 	c=$h/.config/niri/config.kdl
 	mkdir -p "${c%/*}"
 	# Arch: /usr/share/doc/niri, Void: /usr/share/examples/niri
-	src=$(find "$MNT/usr/share/doc" "$MNT/usr/share/examples" -name 'default-config.kdl*' 2>/dev/null | head -n1)
+	# || true: find returns 1 when one of the directories is missing, pipefail would end the installation
+	src=$(find "$MNT/usr/share/doc" "$MNT/usr/share/examples" -name 'default-config.kdl*' 2>/dev/null | head -n1 || true)
 	case $src in
 		*.bz2) bzip2 -dc "$src" ;;
 		*.gz) gzip -dc "$src" ;;
