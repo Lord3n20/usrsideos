@@ -329,24 +329,26 @@ partition() {
 	o=$(fs_opts)
 	SUBVOLS=()
 	log "Root filesystem: $(fs_summary), options $o"
+	# always name the type: without -t mount only tries the filesystems already in /proc/filesystems
+	# when probing fails, so a not yet loaded xfs module made it fail ("SQUASHFS superblock")
 	if [[ $FS == xfs ]]; then
 		mkfs.xfs -f -L usrside "$ROOT" >>"$LOG" 2>&1
-		mount -o "$o" "$ROOT" "$MNT"
+		mount -t xfs -o "$o" "$ROOT" "$MNT"
 	else
 		mkfs.btrfs -f -L usrside "$ROOT" >>"$LOG" 2>&1
 		if btrfs_flat; then
-			mount -o "$o" "$ROOT" "$MNT"
+			mount -t btrfs -o "$o" "$ROOT" "$MNT"
 		else
 			# shellcheck disable=SC2206  # space separated list, checked by fs_problem
 			SUBVOLS=(@ $BTRFS_SUBVOLS)
-			mount "$ROOT" "$MNT"
+			mount -t btrfs "$ROOT" "$MNT"
 			for s in "${SUBVOLS[@]}"; do btrfs subvolume create "$MNT/$s" >>"$LOG"; done
 			umount "$MNT"
-			for s in "${SUBVOLS[@]}"; do mount --mkdir -o "$o,subvol=$s" "$ROOT" "$MNT$(subvol_dir "$s")"; done
+			for s in "${SUBVOLS[@]}"; do mount --mkdir -t btrfs -o "$o,subvol=$s" "$ROOT" "$MNT$(subvol_dir "$s")"; done
 			flags=" rootflags=subvol=@"
 		fi
 	fi
-	mount --mkdir -o fmask=0077,dmask=0077 "$ESP" "$MNT/boot"
+	mount --mkdir -t vfat -o fmask=0077,dmask=0077 "$ESP" "$MNT/boot"
 	PARTUUID=$(blkid -s PARTUUID -o value "$ROOT")
 	ROOT_CMDLINE="root=PARTUUID=$PARTUUID rw$flags rootfstype=$FS $KERNEL_ARGS"
 }
