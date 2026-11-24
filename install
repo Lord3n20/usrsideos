@@ -11,14 +11,19 @@
 #
 # Unattended (tests): install --answers FILE. FILE is a bash snippet that sets DISK, USERNAME,
 # PASSWORD and optionally any other setting below (e.g. USRKRNL=0); the disk is erased without asking.
+# PROFILE=minimal|desktop (default minimal) presets everything else; single options override it:
+# the upper-case option keys from OPTIONS below (DESKTOP=1, BROWSER=0, YAY=1 or AUR=1, …), AUTOLOGIN,
+# USRKRNL and H_*. Unset or empty = value of the profile.
 # TEST_SSH_KEY="ssh-ed25519 …" (answers only) additionally installs and enables sshd with that key
 # for root and the user, for automated tests in a VM. TEST_CACHEDIR=DIR (answers only, Arch) adds a
 # read-only package cache (e.g. the host cache in the VM) for faster test runs.
 #
 # Backend contract (os/*.sh): OS_NAME OS_KERNEL_NAME FREE_HINT COMMUNITY SESSION_CMD IWD_DNS SSH_PKG
-# BASE UCODE_INTEL UCODE_AMD EXTRAS FS_PKG_btrfs FS_PKG_xfs (tools of the chosen root fs, added to BASE), functions os_live_tools os_chroot os_bootstrap os_locale
-# os_enable os_services os_autologin os_sound os_community os_kernel_hook os_hopd_service
-# os_confirm_service os_finish. Helpers for backends: log, die (aborts), warn (goes on; shown in
+# BASE (always) BUILD_PKGS (compiler/make: hopd, usrkrnl, yay) KERNEL_PKGS (usrkrnl) PKG[option]
+# AUR[option] (Arch) BROWSER_NAME LOCK_CMD POLKIT_SPAWN UCODE_INTEL UCODE_AMD FS_PKG_btrfs FS_PKG_xfs
+# (tools of the chosen root fs), functions os_live_tools os_chroot os_bootstrap os_locale os_enable
+# os_services os_extra_services os_autologin os_sound os_community os_kernel_hook os_hopd_service
+# os_confirm_service os_finish. An option without packages in PKG/AUR is not offered on that backend. Helpers for backends: log, die (aborts), warn (goes on; shown in
 # the final dialog, for optional parts such as sound).
 set -euo pipefail
 
@@ -45,8 +50,10 @@ TIMEZONE=Europe/Berlin
 HOSTNAME_=usrside
 USERNAME=""
 PASSWORD=""
-AUTOLOGIN=1
-USRKRNL=1
+# empty = set by the profile (minimal: all off; desktop: see apply_profile)
+PROFILE=""
+AUTOLOGIN=""
+USRKRNL=""
 KERNEL_ARGS="quiet"
 # root filesystem (the ESP is always vfat)
 FS=btrfs                     # btrfs | xfs
@@ -58,9 +65,52 @@ TEST_SSH_KEY=""
 # shellcheck disable=SC2034  # used by os/arch.sh
 TEST_CACHEDIR=""
 # hopd (values go into its config.h)
-H_STROM=0 H_LUEFTER=0 H_EGPU=0 H_AKKULOG=0 H_NIRI=0
+H_STROM="" H_LUEFTER="" H_EGPU="" H_AKKULOG="" H_NIRI=""
 H_PL1_AC=45 H_PL2_AC=64 H_PL1_BAT=12 H_PL2_BAT=20
 H_BRIGHT_BAT=40 H_PANEL=eDP-1 H_MODE_AC="" H_MODE_BAT="" H_ECORES=0
+
+# optional software: key, required keys, state in the desktop profile (on/off/hw = if the hardware
+# is there), label. The minimal profile has all of them off. Packages per backend: PKG/AUR in os/*.sh.
+OPTIONS=(
+	desktop     ""                 on  "niri desktop (niri, kitty, xwayland-satellite, portal, clipboard, fonts)"
+	waybar      desktop            on  "waybar (top bar)"
+	rofi        desktop            on  "rofi (app launcher, Mod+Space)"
+	mako        desktop            on  "mako (notifications)"
+	lock        desktop            on  "Lock screen + idle lock (Mod+L)"
+	polkit      desktop            on  "polkit agent (password prompts of apps)"
+	swaybg      desktop            on  "swaybg (plain wallpaper colour)"
+	sound       ""                 on  "Sound: PulseAudio + pulsemixer"
+	bluetooth   ""                 on  "Bluetooth (bluez)"
+	sound_bt    "sound bluetooth"  on  "PulseAudio Bluetooth module"
+	ssh         ""                 on  "OpenSSH (client; the server is not enabled)"
+	wireguard   ""                 on  "WireGuard tools"
+	neovim      ""                 on  "neovim (editor)"
+	btop        ""                 on  "btop (process monitor)"
+	fastfetch   ""                 on  "fastfetch (system info with UsrsideOS logo)"
+	bashcomp    ""                 on  "bash-completion"
+	fzf         ""                 on  "fzf (fuzzy finder)"
+	tmux        ""                 on  "tmux (terminal multiplexer)"
+	less        ""                 on  "less (pager)"
+	unzip       ""                 on  "unzip"
+	wget        ""                 on  "wget"
+	pkgtools    ""                 on  "Package cache cleanup (pacman-contrib, weekly paccache)"
+	mpv         ""                 on  "mpv (video player)"
+	zathura     ""                 on  "zathura (PDF viewer)"
+	feh         ""                 on  "feh (image viewer)"
+	browser     ""                 on  "Web browser"
+	yay         ""                 on  "yay (AUR helper)"
+	intel_media ""                 hw  "Intel video acceleration (intel-media-driver)"
+	nvidia      ""                 hw  "NVIDIA driver"
+	bolt        ""                 hw  "Thunderbolt device manager (bolt)"
+	tuxedo      ""                 hw  "TUXEDO laptop drivers"
+	printing    ""                 off "Printing + scanning (CUPS)"
+	fish        ""                 off "fish shell"
+	office      ""                 off "LibreOffice"
+	games       ""                 off "Steam + MangoHud"
+	latex       ""                 off "LaTeX (TeX Live base)"
+)
+declare -A SEL=()   # option key -> 0/1
+RESOLVED=""
 
 # ---------------------------------------------------------------- helpers
 ERRFILE=/tmp/usrsideos-error
@@ -108,14 +158,34 @@ has_battery()  { compgen -G '/sys/class/power_supply/BAT*' >/dev/null; }
 is_tuxedo_gen9() { [[ $(cat /sys/class/dmi/id/board_name 2>/dev/null) == GXxMRXx ]]; }
 has_thunderbolt() { [[ -n $(ls /sys/bus/thunderbolt/devices 2>/dev/null) ]]; }
 is_hybrid() { [[ -d /sys/devices/cpu_atom ]]; }
+is_tuxedo() { grep -qi tuxedo /sys/class/dmi/id/sys_vendor /sys/class/dmi/id/board_vendor 2>/dev/null; }
+has_gpu() {   # $1 PCI vendor id, e.g. 0x8086 Intel, 0x10de NVIDIA (display controllers only)
+	local d
+	for d in /sys/bus/pci/devices/*; do
+		[[ $(cat "$d/class" 2>/dev/null) == 0x03* && $(cat "$d/vendor" 2>/dev/null) == "$1" ]] && return 0
+	done
+	return 1
+}
+hw_present() {
+	case $1 in
+		intel_media) has_gpu 0x8086 ;; nvidia) has_gpu 0x10de ;; bolt) has_thunderbolt ;; tuxedo) is_tuxedo ;; *) return 1 ;;
+	esac
+}
 rapl_watts() {   # current long-term power limit (PL1) in W, empty if unknown
 	local f=/sys/class/powercap/intel-rapl:0/constraint_0_power_limit_uw
 	[[ -r $f ]] && echo $(($(<"$f") / 1000000))
 }
 
+# hardware-based hopd parts (desktop profile); only fills parts that are still empty
 hopd_defaults() {
-	if has_battery; then H_STROM=1 H_AKKULOG=1; fi
-	is_tuxedo_gen9 && H_LUEFTER=1
+	local b=0; has_battery && b=1
+	: "${H_STROM:=$b}" "${H_AKKULOG:=$b}"
+	is_tuxedo_gen9 && : "${H_LUEFTER:=1}"
+	: "${H_LUEFTER:=0}" "${H_EGPU:=0}"
+	return 0
+}
+# hopd values from the hardware (used whenever a hopd part is chosen, in any profile)
+hopd_values() {
 	is_hybrid && H_ECORES=1
 	local w; w=$(rapl_watts || true)
 	if [[ -n $w ]] && ((w > 5)); then
@@ -173,6 +243,62 @@ fs_summary() {
 	else echo "btrfs @ $BTRFS_SUBVOLS, $BTRFS_COMPRESS"; fi
 }
 
+# ---------------------------------------------------------------- options and profiles
+opt_avail() { [[ -n ${PKG[$1]:-}${AUR[$1]:-} ]]; }
+opt_on() { [[ ${SEL[$1]:-0} == 1 ]]; }
+hopd_on() { ((H_STROM || H_AKKULOG || H_LUEFTER || H_EGPU || H_NIRI)); }
+opt_label() {
+	local i
+	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do [[ ${OPTIONS[i]} == "$1" ]] && break; done
+	case $1 in browser) echo "${OPTIONS[i+3]} ($BROWSER_NAME)" ;; *) echo "${OPTIONS[i+3]}" ;; esac
+}
+
+# $1 minimal|desktop, $2 force (menu: overwrite everything) or fill (answers: only what is still empty)
+apply_profile() {
+	local p=$1 mode=$2 i k v var
+	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
+		k=${OPTIONS[i]} var=${k^^}
+		if [[ $mode == fill && -n ${!var:-} ]]; then SEL[$k]=${!var}; continue; fi
+		v=0
+		if [[ $p == desktop ]]; then
+			case ${OPTIONS[i+2]} in on) v=1 ;; hw) hw_present "$k" && v=1 ;; esac
+		fi
+		SEL[$k]=$v
+	done
+	if [[ $mode == force ]]; then AUTOLOGIN="" USRKRNL="" H_STROM="" H_AKKULOG="" H_LUEFTER="" H_EGPU="" H_NIRI=""; fi
+	if [[ $p == desktop ]]; then
+		: "${AUTOLOGIN:=1}" "${H_NIRI:=1}"
+		hopd_defaults
+	fi
+	: "${AUTOLOGIN:=0}" "${USRKRNL:=0}" "${H_STROM:=0}" "${H_AKKULOG:=0}" "${H_LUEFTER:=0}" "${H_EGPU:=0}" "${H_NIRI:=0}"
+	PROFILE=$p
+}
+
+# switches on what the selection needs (waybar -> niri desktop, AUR packages -> yay …), switches off
+# what this backend does not have; RESOLVED gets one line per automatic change. Not in $(…): a
+# subshell would lose the changes to SEL
+resolve_options() {
+	local i k r changed=1
+	RESOLVED=""
+	((AUTOLOGIN || H_NIRI)) && ! opt_on desktop && { SEL[desktop]=1; RESOLVED+="niri desktop switched on (needed by autologin / hopd niri part)"$'\n'; }
+	if ((${#EXTRA_AUR[@]})) && ! opt_on yay; then SEL[yay]=1; RESOLVED+="yay switched on (needed by the AUR packages)"$'\n'; fi
+	while ((changed)); do
+		changed=0
+		for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
+			k=${OPTIONS[i]}
+			opt_on "$k" || continue
+			if ! opt_avail "$k"; then SEL[$k]=0; continue; fi
+			for r in ${OPTIONS[i+1]}; do
+				opt_avail "$r" && ! opt_on "$r" && { SEL[$r]=1; changed=1; RESOLVED+="$(opt_label "$r") switched on (needed by: $(opt_label "$k"))"$'\n'; }
+			done
+			if [[ -n ${AUR[$k]:-} ]] && ! opt_on yay; then SEL[yay]=1; changed=1; RESOLVED+="yay switched on (needed by: $(opt_label "$k"))"$'\n'; fi
+		done
+	done
+	opt_on yay && ! opt_avail yay && SEL[yay]=0
+	RESOLVED=${RESOLVED%$'\n'}
+	return 0
+}
+
 # ---------------------------------------------------------------- menu entries
 m_disk() {
 	local list=() n s m
@@ -202,6 +328,10 @@ m_user() {
 	USERNAME=$n PASSWORD=$p1
 }
 m_autologin() {
+	if ! opt_on desktop; then
+		dlg --yesno "Autologin starts niri, but the niri desktop is not selected.\n\nSwitch the niri desktop on?" 9 64 || { AUTOLOGIN=0; return 0; }
+		SEL[desktop]=1
+	fi
 	if dlg --yesno "Log in automatically on tty1 and start niri?\n\n(The UsrsideOS way: power on → desktop. Locking is done by hyprlock/swaylock if installed.)" 10 64
 	then AUTOLOGIN=1; else AUTOLOGIN=0; fi
 }
@@ -232,21 +362,35 @@ m_kernel() {
 	a=$(dlg --inputbox "Extra kernel parameters (root= is set by the installer):" 8 70 "$KERNEL_ARGS") && KERNEL_ARGS=$a
 	true
 }
-m_extras() {
-	local sel i list=() free
-	for ((i = 0; i < ${#EXTRAS[@]}; i += 3)); do list+=("${EXTRAS[i]}" "${EXTRAS[i+1]}" "${EXTRAS[i+2]}"); done
-	sel=$(dlg --separate-output --title "Extra packages" --checklist "Space = on/off. Anything else can be installed later." 24 78 16 "${list[@]}") || return 0
-	# remember the selection in EXTRAS
-	for ((i = 0; i < ${#EXTRAS[@]}; i += 3)); do
-		if grep -qxF "${EXTRAS[i]}" <<<"$sel"; then EXTRAS[i+2]=on; else EXTRAS[i+2]=off; fi
+m_profile() {
+	local p
+	p=$(dlg --title "Profile" --default-item "${PROFILE:-minimal}" --menu "Start from a profile; every single option can be changed afterwards (Packages, Autologin, hopd, usrkrnl)." 12 76 2 \
+		minimal "Minimal: text login, network, nothing else (like archinstall minimal)" \
+		desktop "UsrsideOS desktop: niri, PulseAudio, waybar, rofi, tools, browser …") || return 0
+	apply_profile "$p" force
+}
+m_packages() {
+	local sel i k list=() free
+	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
+		k=${OPTIONS[i]}
+		opt_avail "$k" || continue
+		list+=("$k" "$(opt_label "$k")$([[ ${OPTIONS[i+2]} == hw ]] && hw_present "$k" && echo " [detected]")" "$(on_off "${SEL[$k]:-0}")")
 	done
-	free=$(dlg --inputbox "More packages (space separated; $FREE_HINT):" 9 78 "$(printf '%s ' "${EXTRA_REPO[@]}" "${EXTRA_AUR[@]/#/aur:}")") || return 0
+	sel=$(dlg --separate-output --title "Packages" --checklist "Space = on/off. Needed parts are switched on automatically. Anything else can be installed later." 24 86 17 "${list[@]}") || return 0
+	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
+		k=${OPTIONS[i]}
+		if grep -qxF "$k" <<<"$sel"; then SEL[$k]=1; else SEL[$k]=0; fi
+	done
+	free=$(dlg --inputbox "More packages (space separated; $FREE_HINT):" 9 78 "$(printf '%s ' "${EXTRA_REPO[@]}" "${EXTRA_AUR[@]/#/aur:}")") || free=""
 	EXTRA_REPO=() EXTRA_AUR=()
 	for p in $free; do
 		if [[ $p == aur:* ]]; then
 			if [[ $OS == arch ]]; then EXTRA_AUR+=("${p#aur:}"); else dlg --msgbox "AUR packages only work on Arch: $p skipped." 6 60; fi
 		else EXTRA_REPO+=("$p"); fi
 	done
+	resolve_options
+	if ! opt_on desktop; then AUTOLOGIN=0 H_NIRI=0; fi
+	[[ -z $RESOLVED ]] || dlg --title "Switched on automatically" --msgbox "$RESOLVED" 14 80
 }
 m_hopd() {
 	local sel list=() vals
@@ -255,7 +399,9 @@ m_hopd() {
 	list+=(akkulog "Log battery drain (akku-log report)" $( ((H_AKKULOG)) && echo on || echo off))
 	is_tuxedo_gen9 && list+=(luefter "Fan curves TUXEDO InfinityBook Pro Gen9" $( ((H_LUEFTER)) && echo on || echo off))
 	has_thunderbolt && list+=(egpu "Wake Thunderbolt eGPU + log disconnects" $( ((H_EGPU)) && echo on || echo off))
-	list+=(niri "niri session: lid, refresh rate, waybar, locking (needs waybar, hyprlock, swayidle)" $( ((H_NIRI)) && echo on || echo off))
+	if opt_on desktop; then
+		list+=(niri "niri session: lid, refresh rate, waybar, locking (needs waybar, lock screen)" $( ((H_NIRI)) && echo on || echo off))
+	else H_NIRI=0; fi
 	sel=$(dlg --separate-output --title "hopd – parts" --checklist "hopd is a small daemon (C) for power, fans and eGPU. Only the selected parts are compiled in." 18 90 6 "${list[@]}") || return 0
 	for t in strom akkulog luefter egpu niri; do
 		v=0; grep -qx "$t" <<<"$sel" && v=1
@@ -281,11 +427,13 @@ m_hopd() {
 
 on_off() { (($1)) && echo on || echo off; }
 main_menu() {
-	local choice hparts
+	local choice hparts n k
 	while true; do
 		hparts=""
 		for t in STROM AKKULOG LUEFTER EGPU NIRI; do v=H_$t; ((${!v})) && hparts+="${t,,} "; done
-		choice=$(dlg --title "$TITLE" --cancel-label "Cancel" --menu "Base system: $OS_NAME. Set the options, then Install." 23 76 12 \
+		n=0; for k in "${!SEL[@]}"; do ((SEL[$k])) && n=$((n + 1)); done
+		choice=$(dlg --title "$TITLE" --cancel-label "Cancel" --menu "Base system: $OS_NAME. Set the options, then Install." 24 76 13 \
+			P "Profile:          $PROFILE" \
 			1 "Disk:             ${DISK:-(choose)}" \
 			F "Filesystem:       $(fs_summary)" \
 			2 "Keyboard/locale:  $KEYMAP, $LOCALE" \
@@ -294,12 +442,12 @@ main_menu() {
 			5 "User:             ${USERNAME:-(create)}" \
 			6 "Autologin + niri: $(on_off $AUTOLOGIN)" \
 			7 "hopd:             ${hparts:-off}" \
-			8 "Extra packages" \
+			8 "Packages:         $n selected$(opt_on desktop && echo ", niri desktop")" \
 			9 "Build usrkrnl:    $(on_off $USRKRNL)" \
 			I "Install" \
 			Q "Cancel") || exit 0
 		case $choice in
-			1) m_disk ;; F) m_fs ;; 2) m_keyboard ;; 3) m_timezone ;; 4) m_hostname ;; 5) m_user ;;
+			P) m_profile ;; 1) m_disk ;; F) m_fs ;; 2) m_keyboard ;; 3) m_timezone ;; 4) m_hostname ;; 5) m_user ;;
 			6) m_autologin ;; 7) m_hopd ;; 8) m_extras ;; 9) m_kernel ;;
 			I) ready && return 0 ;;
 			Q) exit 0 ;;
@@ -313,6 +461,8 @@ ready() {
 	p=$(fs_problem)
 	[[ -z $p ]] || { dlg --msgbox "Filesystem settings:\n$p" 8 64; return 1; }
 	[[ -n $USERNAME ]] || { dlg --msgbox "Create a user first." 6 40; return 1; }
+	resolve_options; opt_on desktop || AUTOLOGIN=0 H_NIRI=0
+	[[ -z $RESOLVED ]] || dlg --title "Switched on automatically" --msgbox "$RESOLVED" 14 80
 	dlg --defaultno --yesno "Install $OS_NAME + UsrsideOS now?\n\n$DISK will be ERASED COMPLETELY." 9 54
 }
 
@@ -365,7 +515,13 @@ packages() {
 	REPO=("${BASE[@]}" ${!fsp})
 	if grep -q GenuineIntel /proc/cpuinfo; then [[ -z $UCODE_INTEL ]] || REPO+=("$UCODE_INTEL")
 	elif grep -q AuthenticAMD /proc/cpuinfo; then [[ -z $UCODE_AMD ]] || REPO+=("$UCODE_AMD"); fi
-	for ((i = 0; i < ${#EXTRAS[@]}; i += 3)); do [[ ${EXTRAS[i+2]} == on ]] && REPO+=(${EXTRAS[i]}); done
+	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
+		# shellcheck disable=SC2206  # a list of package names
+		opt_on "${OPTIONS[i]}" && REPO+=(${PKG[${OPTIONS[i]}]:-})
+	done
+	# compiler + make for hopd, usrkrnl and AUR builds; the kernel build tools only for usrkrnl
+	if ((USRKRNL)) || hopd_on || opt_on yay; then REPO+=("${BUILD_PKGS[@]}"); fi
+	((USRKRNL)) && REPO+=("${KERNEL_PKGS[@]}")
 	REPO+=("${EXTRA_REPO[@]}")
 	[[ -z $TEST_SSH_KEY ]] || REPO+=("$SSH_PKG")
 	os_bootstrap
@@ -421,6 +577,7 @@ base_system() {
 	printf '[General]\nEnableNetworkConfiguration=true\n\n[Network]\nNameResolvingService=%s\n' "$IWD_DNS" >"$MNT/etc/iwd/main.conf"
 	cp -a /var/lib/iwd/. "$MNT/var/lib/iwd/" 2>/dev/null || true
 	os_services
+	os_extra_services
 
 	# name, fastfetch logo
 	install -Dm644 "$HERE/files/logo.txt" "$MNT/usr/share/usrsideos/logo.txt"
@@ -433,35 +590,37 @@ base_system() {
 	cp -a "$HERE/." "$MNT/home/$USERNAME/usrsideos/"
 }
 
+# niri config (desktop option), sound start, fastfetch logo, autologin
 desktop() {
-	log "Setting up niri"
-	local h=$MNT/home/$USERNAME c src
-	c=$h/.config/niri/config.kdl
-	mkdir -p "${c%/*}"
-	# Arch: /usr/share/doc/niri, Void: /usr/share/examples/niri
-	# || true: find returns 1 when one of the directories is missing, pipefail would end the installation
-	src=$(find "$MNT/usr/share/doc" "$MNT/usr/share/examples" -name 'default-config.kdl*' 2>/dev/null | head -n1 || true)
-	case $src in
-		*.bz2) bzip2 -dc "$src" ;;
-		*.gz) gzip -dc "$src" ;;
-		*.zst) zstd -qdc "$src" ;;
-		# curl from the target: not every live ISO has curl or wget (Void has neither)
-		"") os_chroot curl -fsSL https://raw.githubusercontent.com/YaLTeR/niri/main/resources/default-config.kdl 2>/dev/null || true ;;
-		*) cat "$src" ;;
-	esac | sed 's/"alacritty"/"kitty"/g' >"$c"
-	[[ -s $c ]] || { rm -f "$c"; warn "niri: no default config found, niri writes its own on first start (without the UsrsideOS changes: waybar/hopd/PipeWire autostart)"; }
-	if [[ -f $c ]]; then
-		[[ -x $MNT/usr/bin/waybar ]] || sed -i 's/^spawn-at-startup "waybar"/\/\/ spawn-at-startup "waybar"/' "$c"
-		if ((H_NIRI)); then
-			sed -i 's/^\/\/ *spawn-at-startup "waybar"/spawn-at-startup "waybar"/; s/^spawn-at-startup "waybar"/spawn-at-startup "hopd" "sitzung"/' "$c"
+	local h=$MNT/home/$USERNAME c="" src
+	if opt_on desktop; then
+		log "Setting up niri"
+		c=$h/.config/niri/config.kdl
+		mkdir -p "${c%/*}"
+		# Arch: /usr/share/doc/niri, Void: /usr/share/examples/niri
+		# || true: find returns 1 when one of the directories is missing, pipefail would end the installation
+		src=$(find "$MNT/usr/share/doc" "$MNT/usr/share/examples" -name 'default-config.kdl*' 2>/dev/null | head -n1 || true)
+		case $src in
+			*.bz2) bzip2 -dc "$src" ;;
+			*.gz) gzip -dc "$src" ;;
+			*.zst) zstd -qdc "$src" ;;
+			# curl from the target: not every live ISO has curl or wget (Void has neither)
+			"") os_chroot curl -fsSL https://raw.githubusercontent.com/YaLTeR/niri/main/resources/default-config.kdl 2>/dev/null || true ;;
+			*) cat "$src" ;;
+		esac | sed 's/"alacritty"/"kitty"/g' >"$c"
+		if [[ -s $c ]]; then
+			niri_config "$c"
+		else
+			rm -f "$c"; c=""
+			warn "niri: no default config found, niri writes its own on first start (without the UsrsideOS changes: waybar/hopd/sound/lock autostart)"
 		fi
-		os_sound "$c"
 	fi
+	opt_on sound && os_sound "$c"
 	if [[ -x $MNT/usr/bin/fastfetch ]]; then
 		mkdir -p "$h/.config/fastfetch"
 		printf '{\n  "logo": { "source": "/usr/share/usrsideos/logo-small.txt", "color": { "1": "37", "2": "96" } }\n}\n' >"$h/.config/fastfetch/config.jsonc"
 	fi
-	if ((AUTOLOGIN)); then
+	if ((AUTOLOGIN)) && opt_on desktop; then
 		os_autologin
 		cat >>"$h/.bash_profile" <<EOF
 
@@ -473,8 +632,31 @@ EOF
 	os_chroot chown -R "$USERNAME:$USERNAME" "/home/$USERNAME"
 }
 
+# UsrsideOS changes to niri's default config, depending on the selected options
+niri_config() {
+	local c=$1 l
+	[[ -x $MNT/usr/bin/waybar ]] || sed -i 's/^spawn-at-startup "waybar"/\/\/ spawn-at-startup "waybar"/' "$c"
+	if ((H_NIRI)); then   # hopd starts waybar (and locks with hyprlock when the lid closes)
+		sed -i 's/^\/\/ *spawn-at-startup "waybar"/spawn-at-startup "waybar"/; s/^spawn-at-startup "waybar"/spawn-at-startup "hopd" "sitzung"/' "$c"
+	fi
+	if opt_on rofi; then   # launcher on Mod+Space instead of fuzzel on Mod+D
+		sed -i 's/^\( *\)Mod+D hotkey-overlay-title="[^"]*" { spawn "fuzzel"; }/\1Mod+Space hotkey-overlay-title="Run an Application: rofi" { spawn "rofi" "-show" "drun"; }/' "$c"
+		sed -i 's/^\( *\)\(Mod+Space *{ switch-layout\)/\1\/\/ \2/' "$c"
+	fi
+	if opt_on lock; then   # Mod+L locks (focus right stays on Mod+Right)
+		l=$LOCK_CMD
+		sed -i "s/^\\( *\\)Super+Alt+L hotkey-overlay-title=\"[^\"]*\" { spawn \"swaylock\"; }/\\1Mod+L hotkey-overlay-title=\"Lock the Screen: $l\" { spawn \"$l\"; }/" "$c"
+		sed -i 's/^\( *\)\(Mod+L *{ focus-column-right; }\)/\1\/\/ \2/' "$c"
+		# idle lock; with the hopd niri part hopd also locks when the lid closes (hyprlock)
+		printf 'spawn-at-startup "swayidle" "timeout" "600" "pidof %s || %s" "before-sleep" "pidof %s || %s &"\n' "$l" "$l" "$l" "$l" >>"$c"
+	fi
+	opt_on polkit && echo "spawn-at-startup $POLKIT_SPAWN" >>"$c"
+	opt_on swaybg && echo 'spawn-at-startup "swaybg" "-c" "#1e2030"' >>"$c"
+	return 0
+}
+
 build_hopd() {
-	if ! ((H_STROM || H_AKKULOG || H_LUEFTER || H_EGPU || H_NIRI)); then
+	if ! hopd_on; then
 		warn "hopd: no part selected, not installed (later: ~/usrsideos/hopd, see README)"
 		return 0
 	fi
@@ -569,6 +751,7 @@ install_all() {
 
 finish_msg() {
 	local m="UsrsideOS ($OS_NAME) is installed.\n\nRemove the USB stick and reboot."
+	opt_on desktop || m+="\n\nNo desktop selected: after the reboot you get a text login. Wi-Fi: iwctl, wired network works by itself.\nLater: install niri etc. with the package manager, or reinstall with the desktop profile."
 	if [[ -e /tmp/usrsideos-no-usrkrnl ]]; then
 		m+="\n\nusrkrnl could not be built – the $OS_NAME kernel is used.\nTry again later: ~/usrsideos/usrkrnl/setup"
 	elif ((USRKRNL)); then
@@ -583,7 +766,7 @@ finish_msg() {
 }
 
 requirements
-hopd_defaults
+hopd_values
 # backends without a green VM test yet; remove an ID here once its test has passed
 case $OS in
 	void|gentoo)
@@ -595,6 +778,14 @@ esac
 if [[ -n $ANSWERS ]]; then
 	# shellcheck disable=SC1090
 	. "$ANSWERS"
+	[[ -z ${AUR:-} ]] || : "${YAY:=$AUR}"
+	case ${PROFILE:-minimal} in minimal|desktop) ;; *) echo "--answers: PROFILE=$PROFILE: minimal or desktop" >&2; exit 1 ;; esac
+	if [[ $OS != arch ]] && ((${#EXTRA_AUR[@]})); then log "--answers: EXTRA_AUR ignored (AUR only on Arch)"; EXTRA_AUR=(); fi
+	apply_profile "${PROFILE:-minimal}" fill
+	resolve_options
+	[[ -z $RESOLVED ]] || while IFS= read -r l; do log "--answers: $l"; done <<<"$RESOLVED"
+	opt_on desktop || AUTOLOGIN=0 H_NIRI=0
+	log "--answers: profile $PROFILE, options: $(for k in "${!SEL[@]}"; do ((SEL[$k])) && printf '%s ' "$k"; done)"
 	[[ -n $DISK && -n $USERNAME && -n $PASSWORD ]] || { echo "--answers: DISK, USERNAME and PASSWORD are required" >&2; exit 1; }
 	p=$(disk_problem "$DISK")
 	[[ -z $p ]] || { log "--answers: DISK rejected: $p"; echo "--answers: DISK rejected: $p" >&2; exit 1; }
@@ -605,6 +796,7 @@ if [[ -n $ANSWERS ]]; then
 	finish_msg
 	exit 0
 fi
+apply_profile minimal force
 main_menu
 set +e
 install_all | dialog --backtitle "$TITLE" --title "Installation" --gauge "Here we go …" 9 70 0

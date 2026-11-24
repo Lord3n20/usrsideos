@@ -1,6 +1,7 @@
 # UsrsideOS installer backend: Arch Linux (booted from the Arch ISO).
 # Sourced by ../install, see the contract there.
 
+# shellcheck disable=SC2034  # contract variables of this file are used by ../install
 OS_NAME="Arch Linux"
 OS_KERNEL_NAME=linux          # fallback entry: \vmlinuz-linux + \initramfs-linux.img
 FREE_HINT="AUR packages prefixed with aur:, e.g. aur:visual-studio-code-bin"
@@ -9,36 +10,35 @@ SSH_PKG=openssh
 SESSION_CMD="exec niri-session"
 IWD_DNS=systemd
 
-BASE=(base linux linux-firmware dosfstools sudo iwd niri kitty xwayland-satellite
-	xdg-desktop-portal-gnome noto-fonts base-devel git efibootmgr
-	dkms clang lld llvm bc pahole cpio perl openssl zstd curl)
+# always: a bootable system with network; the rest only when chosen (see install: packages)
+BASE=(base linux linux-firmware dosfstools sudo iwd git efibootmgr)
+BROWSER_NAME=ungoogled-chromium
+LOCK_CMD=hyprlock
+POLKIT_SPAWN='"systemctl" "--user" "start" "hyprpolkitagent"'
+BUILD_PKGS=(base-devel)               # compiler + make: hopd, usrkrnl, yay
+KERNEL_PKGS=(dkms clang lld llvm bc pahole cpio perl openssl zstd curl)   # usrkrnl only
 FS_PKG_btrfs=btrfs-progs
 FS_PKG_xfs=xfsprogs
 UCODE_INTEL=intel-ucode
 UCODE_AMD=amd-ucode
-AUR_BASE=(ungoogled-chromium-bin)
 
-EXTRAS=(
-	"pipewire pipewire-pulse wireplumber" "Sound (PipeWire)" on
-	"waybar"            "Top bar (niri starts it by itself)" on
-	"fuzzel"            "App launcher (Mod+D)" on
-	"mako"              "Notifications" on
-	"swaybg"            "Wallpaper" off
-	"swayidle hyprlock" "Lock screen + idle" off
-	"bluez bluez-utils" "Bluetooth" off
-	"openssh"           "SSH" off
-	"wireguard-tools"   "WireGuard" off
-	"neovim"            "Editor" off
-	"btop"              "Process monitor" off
-	"fastfetch"         "System info with UsrsideOS logo" on
-	"mpv"               "Video player" off
-	"imv"               "Image viewer" off
-	"zathura zathura-pdf-mupdf" "PDF viewer" off
-	"thunar"            "File manager" off
-	"ttf-jetbrains-mono-nerd" "Font with icons (for waybar/terminal)" off
-	"nvidia-open-dkms nvidia-utils" "NVIDIA driver" off
-	"cups"              "Printing" off
+# packages per option (see OPTIONS in install); AUR = built with yay
+declare -A PKG=(
+	[desktop]="niri kitty xwayland-satellite xdg-desktop-portal-gnome wl-clipboard noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-dejavu ttf-liberation"
+	[waybar]=waybar [rofi]=rofi [mako]=mako [lock]="hyprlock swayidle" [polkit]=hyprpolkitagent [swaybg]=swaybg
+	[sound]="pulseaudio pulseaudio-alsa pulsemixer sof-firmware" [sound_bt]=pulseaudio-bluetooth
+	[bluetooth]="bluez bluez-utils" [ssh]=openssh [wireguard]=wireguard-tools
+	[neovim]=neovim [btop]=btop [fastfetch]=fastfetch [bashcomp]=bash-completion [fzf]=fzf [tmux]=tmux
+	[less]=less [unzip]=unzip [wget]=wget [pkgtools]=pacman-contrib
+	[mpv]=mpv [zathura]="zathura zathura-pdf-poppler" [feh]=feh
+	[yay]=base-devel
+	[intel_media]=intel-media-driver [nvidia]="linux-headers nvidia-open-dkms nvidia-utils nvidia-prime"
+	[bolt]=bolt [tuxedo]=linux-headers
+	[printing]="cups system-config-printer simple-scan" [fish]=fish [office]=libreoffice-fresh
+	[games]="steam mangohud"   # multilib, enabled in os_bootstrap
+	[latex]="texlive-basic texlive-latex texlive-latexrecommended texlive-fontsrecommended"
 )
+declare -A AUR=( [browser]=ungoogled-chromium-bin [tuxedo]=tuxedo-drivers-dkms )
 
 os_live_tools() {
 	command -v dialog >/dev/null || pacman -Sy --noconfirm dialog >/dev/null
@@ -48,8 +48,14 @@ os_live_tools() {
 
 os_chroot() { arch-chroot "$MNT" "$@"; }
 
+# Steam needs the multilib repository, on the ISO (for pacstrap) and in the new system
+multilib_on() {
+	grep -q '^\[multilib\]' "$1" || printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >>"$1"
+}
+
 os_bootstrap() {
 	log "pacstrap: ${REPO[*]}"
+	if opt_on games; then multilib_on /etc/pacman.conf; pacman -Sy >>"$LOG" 2>&1 || true; fi
 	# slow mirrors / weak Wi-Fi: refresh the mirror list once and retry (downloaded packages stay
 	# in the target cache, so the second run only fetches what is missing)
 	# tests: an extra read-only cache; pacman downloads into the first writable --cachedir
@@ -66,6 +72,7 @@ os_bootstrap() {
 		pacman -Syy >>"$LOG" 2>&1 || true
 		pacstrap -K "$MNT" "${REPO[@]}" "${cache[@]}" >>"$LOG" 2>&1 || die "pacstrap failed twice (network/mirrors? see $LOG)"
 	fi
+	if opt_on games; then multilib_on "$MNT/etc/pacman.conf"; fi
 }
 
 os_locale() {
@@ -104,14 +111,47 @@ os_autologin() {
 		>"$MNT/etc/systemd/system/getty@tty1.service.d/autologin.conf"
 }
 
-os_sound() { :; }   # PipeWire is started by systemd user units
+os_extra_services() {
+	opt_on bluetooth && os_enable bluetooth
+	opt_on printing && os_enable cups.socket
+	opt_on pkgtools && os_enable paccache.timer
+	return 0
+}
+
+# PulseAudio is the sound server; PipeWire may only come in as a dependency (portal screen sharing)
+# and must not open the sound cards: wireplumber without ALSA/BlueZ monitors
+wp_no_audio() {
+	install -Dm644 /dev/stdin "$MNT/etc/wireplumber/wireplumber.conf.d/90-usrside-no-audio.conf" <<'EOF'
+# UsrsideOS: PulseAudio owns the sound devices, PipeWire is only for screen sharing
+wireplumber.profiles = {
+  main = {
+    monitor.alsa = disabled
+    monitor.alsa-midi = disabled
+    monitor.bluez = disabled
+  }
+}
+EOF
+}
+
+# PulseAudio through its systemd user socket: starts on the first sound client, for every user
+os_sound() {
+	in_target systemctl --global enable pulseaudio.socket
+	wp_no_audio
+}
 
 os_community() {
+	opt_on yay || return 0
 	log "yay + AUR packages"
 	as_user 'cd /tmp && rm -rf yay-bin && git clone -q https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si --noconfirm' ||
 		die "yay could not be built"
-	as_user "yay -S --noconfirm --needed --removemake ${AUR_BASE[*]} ${EXTRA_AUR[*]}" ||
-		die "AUR packages failed (${AUR_BASE[*]} ${EXTRA_AUR[*]})"
+	local aur=() k
+	for k in "${!AUR[@]}"; do
+		# shellcheck disable=SC2206  # a list of package names
+		opt_on "$k" && aur+=(${AUR[$k]})
+	done
+	aur+=("${EXTRA_AUR[@]}")
+	((${#aur[@]})) || return 0
+	as_user "yay -S --noconfirm --needed --removemake ${aur[*]}" || die "AUR packages failed (${aur[*]})"
 }
 
 os_kernel_hook() { :; }   # pacman installs /boot/vmlinuz-linux under a fixed name already

@@ -8,9 +8,9 @@ tailored to the machine during installation. It got made by vibe-coding a lot of
 > **Void and Gentoo are experimental and untested.** Only the Arch backend has passed a full test
 > installation so far; on a Void or Gentoo ISO the installer asks before it continues.
 
-**Preinstalled:** niri · kitty · ungoogled-chromium (Void: chromium) · hopd · iwd · usrkrnl,
-plus the community package source of the base system (Arch: yay/AUR, Gentoo: GURU + pf4public overlays).
-Everything else is picked in the installer (like archinstall) or installed later with the package manager.
+**Always installed:** base system, kernel + firmware + microcode, sudo, efibootmgr, git, the tools of the
+root filesystem and the network (iwd for Wi-Fi, DHCP for cable). Everything else is chosen in the
+installer, starting from a profile (see [Default selection](#default-selection)).
 
 ## Install
 
@@ -27,9 +27,10 @@ Set disk, user etc. in the menu, then **Install**. The disk is erased completely
 
 | Menu entry | What happens |
 |---|---|
-| Autologin + niri | tty1 logs in by itself and starts niri |
+| Profile | `minimal` (default) or `desktop`, presets everything below |
+| Autologin + niri | tty1 logs in by itself and starts niri (needs the niri desktop) |
 | hopd | only the selected parts are compiled in; values (watts, brightness, panel) are asked for |
-| Extra packages | sound, waybar, fuzzel, mako, lock screen, Bluetooth, NVIDIA … or your own packages (Arch: prefix `aur:` = AUR) |
+| Packages | every option on its own (see the table below), plus your own packages (Arch: prefix `aur:` = AUR) |
 | Filesystem | btrfs (subvolumes, compression) or XFS, see [Filesystem](#filesystem) |
 | Build usrkrnl | kernel with only this machine's drivers, BORE, clang ThinLTO, no initramfs (10–40 min) |
 
@@ -47,7 +48,54 @@ The installer keeps a copy of this repository in `~/usrsideos` for later rebuild
 Defaults are a German setup: `KEYMAP=de-latin1`, `LOCALE=de_DE.UTF-8`, `TIMEZONE=Europe/Berlin`; change them in the menu or set them in the answers file.
 
 Unattended installs (for tests): `install --answers FILE`, where FILE sets `DISK`, `USERNAME`, `PASSWORD`
-and optionally any other variable from the top of `install` (e.g. `USRKRNL=0`).
+and optionally any other variable from the top of `install` (e.g. `USRKRNL=0`). `PROFILE=minimal|desktop`
+presets the rest; single options override it with their key in capitals and `0`/`1` (`DESKTOP=1`,
+`BROWSER=0`, `YAY=1` or `AUR=1`, …), as do `AUTOLOGIN`, `USRKRNL` and `H_*`.
+
+## Default selection
+
+| Profile | After the reboot |
+|---|---|
+| `minimal` (default) | text login on tty1, network; no autologin, no hopd, no usrkrnl, no options |
+| `desktop` | the UsrsideOS desktop: autologin into niri, hopd (parts by hardware, niri part on), all options marked ✓ below; usrkrnl stays off (build time) |
+
+Every option can be switched on its own; what an option needs is switched on automatically
+(waybar, rofi, mako, lock screen, polkit agent and swaybg need the niri desktop, the PulseAudio Bluetooth
+module needs sound and Bluetooth, AUR packages need yay). Answers-file key = the key in capitals.
+
+| Key | Option | `desktop` | Arch | Void | Gentoo |
+|---|---|---|---|---|---|
+| `desktop` | niri, kitty, xwayland-satellite, xdg-desktop-portal-gnome, wl-clipboard, Noto/DejaVu/Liberation fonts | ✓ | ✓ | ✓ | ✓ |
+| `waybar` | top bar | ✓ | ✓ | ✓ | ✓ |
+| `rofi` | app launcher on Mod+Space (replaces fuzzel on Mod+D) | ✓ | ✓ | ✓ | ✓ |
+| `mako` | notifications | ✓ | ✓ | ✓ | ✓ |
+| `lock` | lock screen on Mod+L + idle lock after 10 min (focus right stays on Mod+Right) | ✓ | hyprlock + swayidle | swaylock + swayidle¹ | hyprlock + swayidle |
+| `polkit` | polkit agent | ✓ | hyprpolkitagent | polkit-gnome¹ | polkit-gnome |
+| `swaybg` | plain wallpaper colour | ✓ | ✓ | ✓ | ✓ |
+| `sound` | PulseAudio + pulsemixer (+ sof-firmware) | ✓ | ✓ | ✓ | ✓ |
+| `bluetooth` | bluez, service enabled | ✓ | ✓ | ✓ | ✓ |
+| `sound_bt` | PulseAudio Bluetooth module | ✓ | ✓ | –² | –² |
+| `ssh` | OpenSSH (server not enabled) | ✓ | ✓ | ✓ | ✓ |
+| `wireguard` | WireGuard tools | ✓ | ✓ | ✓ | ✓ |
+| `neovim` `btop` `fastfetch` `bashcomp` `fzf` `tmux` `less` `unzip` `wget` | one option each | ✓ | ✓ | ✓ | ✓ |
+| `pkgtools` | pacman-contrib + weekly paccache.timer | ✓ | ✓ | – | – |
+| `mpv` `zathura` `feh` | video, PDF, images | ✓ | ✓ | ✓ | ✓ |
+| `browser` | ungoogled-chromium (Void: chromium) | ✓ | AUR | ✓ | pf4public |
+| `yay` | AUR helper | ✓ | ✓ | – | – |
+| `intel_media` `nvidia` `bolt` `tuxedo` | Intel video acceleration, NVIDIA driver, Thunderbolt, TUXEDO drivers | if detected | ✓ (tuxedo: AUR) | ✓ | ✓ (no tuxedo) |
+| `printing` | CUPS + system-config-printer + simple-scan | | ✓ | ✓ | ✓ |
+| `fish` `office` `latex` | fish shell, LibreOffice, TeX Live base | | ✓ | ✓ | ✓ |
+| `games` | Steam + MangoHud (enables multilib) | | ✓ | –³ | –³ |
+
+¹ hyprlock and hyprpolkitagent are not packaged for Void. The lid lock of the hopd niri part uses hyprlock,
+so on Void only the idle lock (swayidle) and Mod+L lock.
+² part of PulseAudio itself (Void) or its `bluetooth` USE flag (Gentoo).
+³ Steam needs the multilib repositories (Void) or the steam-overlay (Gentoo); set them up yourself.
+
+Sound is PulseAudio. PipeWire may still come in as a dependency of the portal (screen sharing), but
+WirePlumber is configured not to touch the sound cards and nothing provides the pulse socket.
+Arch starts PulseAudio through its systemd user socket, Void and Gentoo with the niri session (or on
+demand through autospawn).
 
 ## Filesystem
 

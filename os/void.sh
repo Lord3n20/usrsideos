@@ -1,6 +1,7 @@
 # UsrsideOS installer backend: Void Linux (glibc, booted from the Void live ISO).
 # Sourced by ../install, see the contract there.
 
+# shellcheck disable=SC2034  # contract variables of this file are used by ../install
 OS_NAME="Void Linux"
 OS_KERNEL_NAME=void           # fallback entry: \vmlinuz-void + \initramfs-void.img (copied by a kernel hook)
 FREE_HINT="Void package names, e.g. firefox gimp"
@@ -10,36 +11,35 @@ SESSION_CMD="exec dbus-run-session niri --session"
 IWD_DNS=resolvconf
 VOID_REPO=https://repo-default.voidlinux.org/current
 
+# always: a bootable system with network; the rest only when chosen (see install: packages)
 BASE=(base-system linux linux-firmware dracut void-repo-nonfree dosfstools sudo
-	iwd openresolv dbus elogind chrony niri kitty xwayland-satellite xdg-desktop-portal-gnome
-	noto-fonts-ttf chromium base-devel git efibootmgr dkms
-	clang lld llvm bc flex bison pahole cpio perl openssl-devel elfutils-devel zstd curl patch xz)
+	iwd openresolv dbus elogind chrony git efibootmgr)
+BROWSER_NAME=chromium
+LOCK_CMD=swaylock                     # hyprlock is not packaged for Void
+POLKIT_SPAWN='"/usr/libexec/polkit-gnome-authentication-agent-1"'   # hyprpolkitagent: not packaged
+BUILD_PKGS=(base-devel)               # compiler + make: hopd, usrkrnl
+KERNEL_PKGS=(dkms clang lld llvm bc flex bison pahole cpio perl openssl-devel elfutils-devel zstd curl patch xz)   # usrkrnl only
 FS_PKG_btrfs=btrfs-progs
 FS_PKG_xfs=xfsprogs
 UCODE_INTEL=intel-ucode
 UCODE_AMD=linux-firmware-amd
 
-EXTRAS=(
-	"pipewire wireplumber" "Sound (PipeWire)" on
-	"Waybar"            "Top bar (niri starts it by itself)" on
-	"fuzzel"            "App launcher (Mod+D)" on
-	"mako"              "Notifications" on
-	"swaybg"            "Wallpaper" off
-	"swayidle swaylock" "Lock screen + idle" off
-	"bluez"             "Bluetooth" off
-	"openssh"           "SSH" off
-	"wireguard-tools"   "WireGuard" off
-	"neovim"            "Editor" off
-	"btop"              "Process monitor" off
-	"fastfetch"         "System info with UsrsideOS logo" on
-	"mpv"               "Video player" off
-	"imv"               "Image viewer" off
-	"zathura zathura-pdf-mupdf" "PDF viewer" off
-	"Thunar"            "File manager" off
-	"nerd-fonts-ttf"    "Fonts with icons (for waybar/terminal)" off
-	"nvidia"            "NVIDIA driver (nonfree, DKMS)" off
-	"cups"              "Printing" off
+# packages per option (see OPTIONS in install). Not offered on Void: pacman tools, yay, games
+# (Steam needs the multilib repositories), the PulseAudio Bluetooth module (part of pulseaudio)
+declare -A PKG=(
+	[desktop]="niri kitty xwayland-satellite xdg-desktop-portal-gnome wl-clipboard noto-fonts-ttf noto-fonts-cjk noto-fonts-emoji dejavu-fonts-ttf liberation-fonts-ttf"
+	[waybar]=Waybar [rofi]=rofi [mako]=mako [lock]="swaylock swayidle" [polkit]=polkit-gnome [swaybg]=swaybg
+	[sound]="pulseaudio alsa-plugins-pulseaudio pulsemixer sof-firmware"
+	[bluetooth]=bluez [ssh]=openssh [wireguard]=wireguard-tools
+	[neovim]=neovim [btop]=btop [fastfetch]=fastfetch [bashcomp]=bash-completion [fzf]=fzf [tmux]=tmux
+	[less]=less [unzip]=unzip [wget]=wget
+	[mpv]=mpv [zathura]="zathura zathura-pdf-poppler" [feh]=feh
+	[browser]=chromium
+	[intel_media]=intel-media-driver [nvidia]=nvidia [bolt]=bolt [tuxedo]=tuxedo-drivers
+	[printing]="cups system-config-printer simple-scan" [fish]=fish-shell [office]=libreoffice
+	[latex]=texlive-basic
 )
+declare -A AUR=()
 
 os_live_tools() {
 	# an older live ISO refuses every transaction until xbps itself is updated
@@ -103,21 +103,32 @@ os_autologin() {
 	os_enable agetty-autologin-tty1
 }
 
-# without systemd user units PipeWire is started by the session; it starts wireplumber + pulse itself
+os_extra_services() {
+	opt_on bluetooth && os_enable bluetoothd
+	opt_on printing && os_enable cupsd
+	return 0
+}
+
+# PulseAudio is the sound server; PipeWire may only come in as a dependency (portal screen sharing)
+# and must not open the sound cards: wireplumber without ALSA/BlueZ monitors
+wp_no_audio() {
+	install -Dm644 /dev/stdin "$MNT/etc/wireplumber/wireplumber.conf.d/90-usrside-no-audio.conf" <<'EOF'
+# UsrsideOS: PulseAudio owns the sound devices, PipeWire is only for screen sharing
+wireplumber.profiles = {
+  main = {
+    monitor.alsa = disabled
+    monitor.alsa-midi = disabled
+    monitor.bluez = disabled
+  }
+}
+EOF
+}
+
+# no systemd user units: PulseAudio is started with the niri session; without niri, clients start
+# it themselves (autospawn, the default in client.conf)
 os_sound() {
-	[[ -x $MNT/usr/bin/pipewire ]] || return 0
-	mkdir -p "$MNT/etc/pipewire/pipewire.conf.d"
-	# paths checked against pipewire-1.6.10_1 / wireplumber-0.5.18_1 (Void handbook layout);
-	# sound is optional, so a missing file only warns instead of aborting the installation
-	local f
-	for f in wireplumber/10-wireplumber.conf pipewire/20-pipewire-pulse.conf; do
-		if [[ -f $MNT/usr/share/examples/$f ]]; then
-			ln -sf "/usr/share/examples/$f" "$MNT/etc/pipewire/pipewire.conf.d/"
-		else
-			warn "Sound: /usr/share/examples/$f is missing, not linked (PipeWire may run without ${f%%/*})"
-		fi
-	done
-	echo 'spawn-at-startup "pipewire"' >>"$1"
+	[[ -z $1 ]] || echo 'spawn-at-startup "pulseaudio" "--start"' >>"$1"
+	wp_no_audio
 }
 
 os_community() { :; }

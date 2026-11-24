@@ -4,6 +4,7 @@
 # Starts from the desktop-openrc stage3 and uses the official binary packages
 # (binhost) wherever possible, so only the overlay packages are compiled.
 
+# shellcheck disable=SC2034  # contract variables of this file are used by ../install
 OS_NAME="Gentoo"
 OS_KERNEL_NAME=gentoo         # fallback entry: \vmlinuz-gentoo + \initramfs-gentoo.img (copied by a kernel hook)
 FREE_HINT="Gentoo atoms incl. GURU, e.g. www-client/firefox-bin app-misc/foo"
@@ -14,38 +15,38 @@ IWD_DNS=resolvconf
 STAGE3_BASE=https://distfiles.gentoo.org/releases/amd64/autobuilds
 STAGE3_LIST=latest-stage3-amd64-desktop-openrc.txt
 
+# always: a bootable system with network; the rest only when chosen (see install: packages)
 BASE=(sys-kernel/gentoo-kernel-bin sys-kernel/linux-firmware sys-kernel/installkernel
 	sys-fs/dosfstools app-admin/sudo net-wireless/iwd net-misc/dhcpcd net-dns/openresolv
-	sys-auth/elogind sys-apps/dbus net-misc/chrony gui-wm/niri x11-terms/kitty
-	gui-apps/xwayland-satellite sys-apps/xdg-desktop-portal-gnome media-fonts/noto
-	www-client/ungoogled-chromium-bin dev-vcs/git sys-boot/efibootmgr
-	llvm-core/clang llvm-core/lld sys-devel/bc dev-util/pahole app-arch/cpio net-misc/curl app-arch/zstd)
+	sys-auth/elogind sys-apps/dbus net-misc/chrony dev-vcs/git sys-boot/efibootmgr)
+BROWSER_NAME=ungoogled-chromium
+LOCK_CMD=hyprlock
+POLKIT_SPAWN='"/usr/libexec/polkit-gnome-authentication-agent-1"'   # hyprpolkitagent needs systemd --user
+BUILD_PKGS=()                         # gcc + make are part of the stage3
+KERNEL_PKGS=(llvm-core/clang llvm-core/lld sys-devel/bc dev-util/pahole app-arch/cpio net-misc/curl app-arch/zstd)   # usrkrnl only
 FS_PKG_btrfs=sys-fs/btrfs-progs
 FS_PKG_xfs=sys-fs/xfsprogs
 UCODE_INTEL=sys-firmware/intel-microcode
 UCODE_AMD=""                  # AMD microcode is part of linux-firmware
 
-EXTRAS=(
-	"media-video/pipewire media-video/wireplumber" "Sound (PipeWire)" on
-	"gui-apps/waybar"   "Top bar (niri starts it by itself)" on
-	"gui-apps/fuzzel"   "App launcher (Mod+D, GURU)" on
-	"gui-apps/mako"     "Notifications" on
-	"gui-apps/swaybg"   "Wallpaper" off
-	"gui-apps/swayidle gui-apps/swaylock" "Lock screen + idle" off
-	"net-wireless/bluez" "Bluetooth" off
-	"net-misc/openssh"  "SSH" off
-	"net-vpn/wireguard-tools" "WireGuard" off
-	"app-editors/neovim" "Editor" off
-	"sys-process/btop"  "Process monitor" off
-	"app-misc/fastfetch" "System info with UsrsideOS logo" on
-	"media-video/mpv"   "Video player" off
-	"media-gfx/imv"     "Image viewer" off
-	"app-text/zathura app-text/zathura-pdf-mupdf" "PDF viewer" off
-	"xfce-base/thunar"  "File manager" off
-	"media-fonts/nerdfonts" "Fonts with icons (GURU, for waybar/terminal)" off
-	"x11-drivers/nvidia-drivers" "NVIDIA driver" off
-	"net-print/cups"    "Printing" off
+# packages per option (see OPTIONS in install). Not offered on Gentoo: pacman tools, yay, games
+# (Steam needs the steam-overlay), TUXEDO drivers, the PulseAudio Bluetooth module (USE flag)
+declare -A PKG=(
+	[desktop]="gui-wm/niri x11-terms/kitty gui-apps/xwayland-satellite sys-apps/xdg-desktop-portal-gnome gui-apps/wl-clipboard media-fonts/noto media-fonts/noto-cjk media-fonts/noto-emoji media-fonts/dejavu media-fonts/liberation-fonts"
+	[waybar]=gui-apps/waybar [rofi]=x11-misc/rofi [mako]=gui-apps/mako [lock]="gui-apps/hyprlock gui-apps/swayidle"
+	[polkit]=gnome-extra/polkit-gnome [swaybg]=gui-apps/swaybg
+	[sound]="media-sound/pulseaudio-daemon media-libs/libpulse media-sound/pulsemixer sys-firmware/sof-firmware"
+	[bluetooth]=net-wireless/bluez [ssh]=net-misc/openssh [wireguard]=net-vpn/wireguard-tools
+	[neovim]=app-editors/neovim [btop]=sys-process/btop [fastfetch]=app-misc/fastfetch
+	[bashcomp]=app-shells/bash-completion [fzf]=app-shells/fzf [tmux]=app-misc/tmux
+	[less]=sys-apps/less [unzip]=app-arch/unzip [wget]=net-misc/wget
+	[mpv]=media-video/mpv [zathura]="app-text/zathura app-text/zathura-pdf-poppler" [feh]=media-gfx/feh
+	[browser]=www-client/ungoogled-chromium-bin   # pf4public overlay
+	[intel_media]=media-libs/libva-intel-media-driver [nvidia]=x11-drivers/nvidia-drivers [bolt]=sys-apps/bolt
+	[printing]="net-print/cups app-admin/system-config-printer media-gfx/simple-scan" [fish]=app-shells/fish
+	[office]=app-office/libreoffice-bin [latex]=app-text/texlive
 )
+declare -A AUR=()
 
 fetch() { if command -v curl >/dev/null; then curl -fsSL -o "$2" "$1"; else wget -qO "$2" "$1"; fi; }
 
@@ -91,6 +92,9 @@ ACCEPT_LICENSE="*"
 EOF
 	mkdir -p "$MNT/etc/portage/package.use" "$MNT/etc/portage/package.accept_keywords"
 	printf 'sys-kernel/installkernel dracut\nnet-wireless/iwd standalone\n' >"$MNT/etc/portage/package.use/usrside"
+	# PulseAudio as the sound server: PipeWire (portal dependency) must not provide the pulse socket
+	opt_on rofi && echo "x11-misc/rofi wayland" >>"$MNT/etc/portage/package.use/usrside"
+	opt_on sound && printf 'media-video/pipewire -sound-server\n*/* pulseaudio\n' >>"$MNT/etc/portage/package.use/usrside"
 	printf '*/*::guru ~amd64\n*/*::pf4public ~amd64\n' >"$MNT/etc/portage/package.accept_keywords/usrside"
 	# dracut needs to know the root fs without the running system
 	mkdir -p "$MNT/etc/dracut.conf.d"
@@ -133,9 +137,32 @@ os_autologin() {
 	sed -i "s|^c1:.*|c1:12345:respawn:/sbin/agetty --autologin $USERNAME --noclear 38400 tty1 linux|" "$MNT/etc/inittab"
 }
 
+os_extra_services() {
+	opt_on bluetooth && os_enable bluetooth
+	opt_on printing && os_enable cupsd
+	return 0
+}
+
+# PulseAudio is the sound server; PipeWire may only come in as a dependency (portal screen sharing)
+# and must not open the sound cards: wireplumber without ALSA/BlueZ monitors
+wp_no_audio() {
+	install -Dm644 /dev/stdin "$MNT/etc/wireplumber/wireplumber.conf.d/90-usrside-no-audio.conf" <<'EOF'
+# UsrsideOS: PulseAudio owns the sound devices, PipeWire is only for screen sharing
+wireplumber.profiles = {
+  main = {
+    monitor.alsa = disabled
+    monitor.alsa-midi = disabled
+    monitor.bluez = disabled
+  }
+}
+EOF
+}
+
+# no systemd user units: PulseAudio is started with the niri session; without niri, clients start
+# it themselves (autospawn, the default in client.conf)
 os_sound() {
-	[[ -x $MNT/usr/bin/gentoo-pipewire-launcher ]] || return 0
-	echo 'spawn-at-startup "gentoo-pipewire-launcher"' >>"$1"
+	[[ -z $1 ]] || echo 'spawn-at-startup "pulseaudio" "--start"' >>"$1"
+	wp_no_audio
 }
 
 os_community() { :; }   # overlays are set up in os_bootstrap
