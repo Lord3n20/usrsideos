@@ -17,7 +17,8 @@
 # Backend contract (os/*.sh): OS_NAME OS_KERNEL_NAME FREE_HINT COMMUNITY SESSION_CMD IWD_DNS SSH_PKG
 # BASE UCODE_INTEL UCODE_AMD EXTRAS, functions os_live_tools os_chroot os_bootstrap os_locale
 # os_enable os_services os_autologin os_sound os_community os_kernel_hook os_hopd_service
-# os_confirm_service os_finish.
+# os_confirm_service os_finish. Helpers for backends: log, die (aborts), warn (goes on; shown in
+# the final dialog, for optional parts such as sound).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
@@ -56,9 +57,11 @@ H_BRIGHT_BAT=40 H_PANEL=eDP-1 H_MODE_AC="" H_MODE_BAT="" H_ECORES=0
 
 # ---------------------------------------------------------------- helpers
 ERRFILE=/tmp/usrsideos-error
+NOTEFILE=/tmp/usrsideos-notes
 # during the installation stdout belongs to the progress gauge: everything else goes to the log
 log()  { printf '\n==> %s\n' "$*" >>"$LOG"; }
 die()  { log "ERROR: $*"; echo "$*" >"$ERRFILE"; echo "ERROR: $*" >&2; exit 1; }
+warn() { log "WARNING: $*"; echo "$*" >>"$NOTEFILE"; }
 dlg()  { dialog --backtitle "$TITLE" "$@" 3>&1 1>&2 2>&3; }
 in_target() { os_chroot "$@" >>"$LOG" 2>&1; }
 as_user() { os_chroot runuser -l "$USERNAME" -c "$1" >>"$LOG" 2>&1; }
@@ -84,7 +87,7 @@ requirements() {
 	[[ -d /sys/firmware/efi/efivars ]] || { echo "Only UEFI is supported (boot the machine in UEFI mode)." >&2; exit 1; }
 	ping -c1 -W3 kernel.org >/dev/null 2>&1 || { echo "No internet. Connect first (iwctl / wpa_supplicant / net-setup)." >&2; exit 1; }
 	os_live_tools
-	: >"$LOG"; rm -f "$ERRFILE" /tmp/usrsideos-no-usrkrnl
+	: >"$LOG"; rm -f "$ERRFILE" "$NOTEFILE" /tmp/usrsideos-no-usrkrnl
 }
 
 # ---------------------------------------------------------------- detection
@@ -449,6 +452,11 @@ finish_msg() {
 	elif ((USRKRNL)); then
 		m+="\nThe first boot uses usrkrnl; if it works, usrkrnl becomes the default.\nOtherwise the next boot uses the $OS_NAME kernel."
 	fi
+	if [[ -s $NOTEFILE ]]; then
+		m+="\n\nNote:"
+		while IFS= read -r l; do m+="\n- $l"; done <"$NOTEFILE"
+		m+="\nDetails: /var/log/usrsideos-install.log"
+	fi
 	echo -e "$m"
 }
 
@@ -471,4 +479,4 @@ set -e
 if [[ $st != 0 ]]; then
 	dlg --title "Error" --msgbox "Installation aborted:\n$(cat "$ERRFILE" 2>/dev/null)\n\nLog: $LOG" 12 70; exit 1
 fi
-dlg --msgbox "$(finish_msg)" 14 72
+dlg --msgbox "$(finish_msg)" 20 76

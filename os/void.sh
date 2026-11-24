@@ -96,10 +96,15 @@ os_autologin() {
 os_sound() {
 	[[ -x $MNT/usr/bin/pipewire ]] || return 0
 	mkdir -p "$MNT/etc/pipewire/pipewire.conf.d"
-	local f   # paths checked against pipewire-1.6.10_1 / wireplumber-0.5.18_1 (Void handbook layout)
+	# paths checked against pipewire-1.6.10_1 / wireplumber-0.5.18_1 (Void handbook layout);
+	# sound is optional, so a missing file only warns instead of aborting the installation
+	local f
 	for f in wireplumber/10-wireplumber.conf pipewire/20-pipewire-pulse.conf; do
-		[[ -f $MNT/usr/share/examples/$f ]] || die "missing /usr/share/examples/$f in the target"
-		ln -sf "/usr/share/examples/$f" "$MNT/etc/pipewire/pipewire.conf.d/"
+		if [[ -f $MNT/usr/share/examples/$f ]]; then
+			ln -sf "/usr/share/examples/$f" "$MNT/etc/pipewire/pipewire.conf.d/"
+		else
+			warn "Sound: /usr/share/examples/$f is missing, not linked (PipeWire may run without ${f%%/*})"
+		fi
 	done
 	echo 'spawn-at-startup "pipewire"' >>"$1"
 }
