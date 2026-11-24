@@ -279,6 +279,7 @@ base_system() {
 
 	# name, fastfetch logo
 	install -Dm644 "$HERE/files/logo.txt" "$MNT/usr/share/usrsideos/logo.txt"
+	install -Dm644 "$HERE/files/logo-small.txt" "$MNT/usr/share/usrsideos/logo-small.txt"
 	rm -f "$MNT/etc/os-release"
 	install -m644 "$HERE/files/os-release" "$MNT/etc/os-release"
 
