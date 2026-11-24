@@ -85,6 +85,8 @@ os_bootstrap() {
 
 # UsrsideOS
 MAKEOPTS="-j$(nproc)"
+# several packages at once: most come from the binhost, then emerge mostly waits on downloads
+EMERGE_DEFAULT_OPTS="\${EMERGE_DEFAULT_OPTS} --jobs=$(( $(nproc) > 4 ? 4 : $(nproc) )) --load-average=$(nproc)"
 FEATURES="\${FEATURES} getbinpkg binpkg-request-signature"
 USE="\${USE} dist-kernel"
 ACCEPT_LICENSE="*"
