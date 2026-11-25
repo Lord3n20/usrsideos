@@ -87,7 +87,7 @@ DISTRO=$(. /etc/os-release 2>/dev/null; if [[ ${ID:-} == usrside ]]; then echo "
 case $DISTRO in
 	arch) HINT="pacman -S clang lld llvm base-devel bc pahole cpio perl openssl zstd curl efibootmgr" ;;
 	void) HINT="xbps-install clang lld llvm base-devel bc flex bison pahole cpio perl openssl-devel elfutils-devel zstd curl efibootmgr" ;;
-	alpine) HINT="apk add clang lld llvm build-base linux-headers bc flex bison perl pahole openssl-dev elfutils-dev zstd curl patch xz cpio diffutils findutils findmnt blkid lsblk kmod efibootmgr" ;;
+	alpine) HINT="apk add clang lld llvm build-base linux-headers bc flex bison perl pahole openssl-dev elfutils-dev zstd curl patch xz cpio coreutils sed grep diffutils findutils findmnt blkid lsblk kmod iucode-tool python3 efibootmgr" ;;
 	gentoo) HINT="emerge llvm-core/clang llvm-core/lld sys-devel/bc dev-util/pahole app-arch/cpio net-misc/curl sys-boot/efibootmgr" ;;
 	*) HINT="install clang, lld, llvm, make, bc, flex, bison, perl, pahole, openssl and libelf headers, zstd, curl, efibootmgr" ;;
 esac
@@ -110,7 +110,8 @@ if [[ -z $TREE ]]; then
 		sum=$(curl -sSfL "$url/sha256sums.asc" | awk '$2 == f' f="linux-$KVER.tar.xz") ||
 			die "checksum list not available"
 		[[ -n $sum ]] || die "no checksum for linux-$KVER.tar.xz on kernel.org"
-		(cd "$SRC" && sha256sum -c --quiet <<<"$sum") || die "checksum mismatch, linux-$KVER.tar.xz is broken"
+		# no --quiet: BusyBox sha256sum (Alpine) does not know it
+		(cd "$SRC" && sha256sum -c <<<"$sum" >/dev/null) || die "checksum mismatch, linux-$KVER.tar.xz is broken"
 		tar -xf "$SRC/linux-$KVER.tar.xz" -C "$SRC"
 		rm -f "$SRC/linux-$KVER.tar.xz"
 		for p in "$SELF"/patches/*.patch; do
@@ -311,6 +312,14 @@ for dir in /usr/lib/firmware /lib/firmware; do
 		[[ -n $ucode && -r $dir/$ucode$ext ]] && { fwsrc=$dir/$ucode$ext; break 2; }
 	done
 done
+# Alpine's intel-ucode only ships the early cpio /boot/intel-ucode.img: take this CPU's file out of it
+if [[ -z $fwsrc && $vendor == GenuineIntel && -r /boot/intel-ucode.img ]] && command -v iucode_tool >/dev/null; then
+	# CPUID signature: extended family/model in the upper bits
+	sig=$(( (fam > 15 ? ((fam - 15) << 20) | (15 << 8) : fam << 8) | ((model >> 4) << 16) | ((model & 15) << 4) | step ))
+	mkdir -p "$WORK/ucode-split"
+	iucode_tool -q -t r -s "$(printf '0x%08x' "$sig")" --write-firmware="$WORK/ucode-split" /boot/intel-ucode.img 2>/dev/null || true
+	[[ -s $WORK/ucode-split/${ucode#*/} ]] && fwsrc=$WORK/ucode-split/${ucode#*/}
+fi
 if [[ -n $fwsrc ]]; then
 	mkdir -p "$FW/${ucode%/*}"
 	case $fwsrc in
