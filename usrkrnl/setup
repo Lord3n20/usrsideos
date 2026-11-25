@@ -346,7 +346,8 @@ msg "Built-in command line: $cmd"
 
 # ---------------------------------------------------------------- 7. known pitfalls
 # iwd uses the kernel crypto API via AF_ALG; localmodconfig does not see those.
-if command -v iwd >/dev/null || [[ -x /usr/lib/iwd/iwd ]]; then
+# The daemon is not in PATH: /usr/lib/iwd/iwd (Arch), /usr/libexec/iwd (Void, Gentoo).
+if command -v iwd >/dev/null || [[ -x /usr/lib/iwd/iwd || -x /usr/libexec/iwd ]]; then
 	for s in CRYPTO_USER_API CRYPTO_USER_API_HASH CRYPTO_USER_API_SKCIPHER CRYPTO_USER_API_AEAD \
 		CRYPTO_CMAC CRYPTO_HMAC CRYPTO_MD4 CRYPTO_MD5 CRYPTO_SHA1 CRYPTO_SHA256 CRYPTO_SHA512 \
 		CRYPTO_AES CRYPTO_AES_NI_INTEL CRYPTO_ECB CRYPTO_CBC CRYPTO_DES CRYPTO_ARC4 \
