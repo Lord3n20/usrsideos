@@ -10,6 +10,7 @@ usrkrnl is upstream Linux stable (version: `KVER` in [`setup`](setup)) plus:
 | [BORE](https://github.com/CachyOS/kernel-patches) scheduler ([`patches/`](patches/)) | interactive tasks win over background load (desktop stays smooth while compiling) |
 | clang + ThinLTO, `-march=native` | a few percent faster in kernel-heavy work |
 | `HZ_1000`, full preemption, `NO_HZ_IDLE` | low latency without the overhead of `NO_HZ_FULL` |
+| no debug info, no BTF (and so no sched_ext) | faster build, far less memory (pahole was OOM-killed on 8 GB), smaller tree |
 | localmodconfig per machine | only the drivers your hardware actually uses |
 | root disk + filesystem drivers built in, microcode embedded, command line compiled in | boots directly from UEFI (EFI stub), no initramfs, no bootloader |
 
@@ -38,7 +39,7 @@ sha256sums), applies `patches/*.patch` and keeps the tree in
 uses an existing patched tree). Then it takes the config of the running kernel,
 reduces it to the modules in use, applies `usrkrnl.config`, builds the drivers of
 your root disk into the kernel, embeds the CPU microcode and your current kernel
-command line, builds, installs modules (+ DKMS) and copies the image to
+command line, builds (one job per thread, at most one per GiB of available memory), installs modules (+ DKMS) and copies the image to
 `ESP/EFI/usrkrnl/vmlinuz-usr.efi`.
 
 It also copies the image to `ESP/EFI/BOOT/BOOTX64.EFI`, the path the firmware

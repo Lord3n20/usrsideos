@@ -389,8 +389,16 @@ msg "Config ready: $KREL (copy in $WORK/config-$KREL)"
 [[ $STEP == config ]] && exit 0
 
 # ---------------------------------------------------------------- 9. build
-msg "Building $KREL with $(nproc) threads (log: $WORK/build.log)"
-if ! nice -n 15 make "${MKARGS[@]}" -j"$(nproc)" >"$WORK/build.log" 2>&1; then
+# one job per thread, but at most one per GiB of available memory (clang with ThinLTO; the OOM
+# killer ends a compiler or the linker otherwise, e.g. on 8 GB machines or a live system in RAM)
+jobs=$(nproc)
+memjobs=$(awk '/^MemAvailable:/ { n = int($2 / 1048576); print (n < 1 ? 1 : n) }' /proc/meminfo)
+if [[ -n $memjobs ]] && ((memjobs < jobs)); then
+	warn "only $((memjobs)) GiB memory available: $memjobs jobs instead of $jobs (slower, but no OOM kill)"
+	jobs=$memjobs
+fi
+msg "Building $KREL with $jobs jobs (log: $WORK/build.log)"
+if ! nice -n 15 make "${MKARGS[@]}" -j"$jobs" >"$WORK/build.log" 2>&1; then
 	tail -n 30 "$WORK/build.log" >&2
 	die "build failed"
 fi
