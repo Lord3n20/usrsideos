@@ -1,2 +1,9 @@
-# DKMS package   kernel option it needs (enabled as module when the package is installed)
+# DKMS package   kernel option it needs (enabled as module when the package is installed,
+#                left alone when it is already built in). One option per line.
+# tuxedo-drivers: VMs and installer ISOs never load the TUXEDO helpers, so localmodconfig drops them
+# (modpost: led_classdev_multicolor_*, sparse_keymap_* undefined)
 tuxedo-drivers   IIO
+tuxedo-drivers   ACPI_WMI
+tuxedo-drivers   LEDS_CLASS
+tuxedo-drivers   LEDS_CLASS_MULTICOLOR
+tuxedo-drivers   INPUT_SPARSEKMAP

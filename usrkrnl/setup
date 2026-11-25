@@ -262,7 +262,8 @@ fi
 if command -v dkms >/dev/null; then
 	while read -r name sym; do
 		[[ $name == \#* || -z $name ]] && continue
-		if dkms status 2>/dev/null | grep "^$name/" >/dev/null; then kconf --module "$sym"; fi
+		dkms status 2>/dev/null | grep "^$name/" >/dev/null || continue
+		grep -q "^CONFIG_$sym=y\$" "$TREE/.config" || kconf --module "$sym"   # never demote a built-in
 	done <"$SELF/dkms-deps"
 fi
 
