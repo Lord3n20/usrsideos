@@ -25,7 +25,7 @@
 # AUR[option] (Arch) BROWSER_NAME POLKIT_SPAWN UCODE_INTEL UCODE_AMD FS_PKG_btrfs FS_PKG_xfs
 # (tools of the chosen root fs), functions os_live_tools os_chroot os_bootstrap os_locale os_enable
 # os_services os_extra_services os_autologin os_sound os_community os_kernel_hook os_hopd_service
-# os_confirm_service os_finish. An option without packages in PKG/AUR is not offered on that backend. Helpers for backends: log, die (aborts), warn (goes on; shown in
+# os_confirm_service os_freeze_kernel os_finish. An option without packages in PKG/AUR is not offered on that backend. Helpers for backends: log, die (aborts), warn (goes on; shown in
 # the final dialog, for optional parts such as sound).
 set -euo pipefail
 # nothing from the live environment: exported functions (BASH_FUNC_*) and startup files of
@@ -422,7 +422,7 @@ m_fs() {
 }
 m_kernel() {
 	local a
-	if dlg --yesno "Build usrkrnl for this machine? (recommended)\n\nMinimized to the hardware, BORE, clang ThinLTO, no initramfs.\nTakes 10–40 minutes depending on the CPU. The $OS_NAME kernel stays as a fallback entry." 11 70
+	if dlg --yesno "Build usrkrnl for this machine? (recommended)\n\nMinimized to the hardware, BORE, clang ThinLTO, no initramfs.\nTakes 10–40 minutes depending on the CPU. The $OS_NAME kernel from the installation stays\nas a frozen emergency backup entry; updates no longer touch it." 12 70
 	then USRKRNL=1; else USRKRNL=0; fi
 	a=$(dlg --inputbox "Extra kernel parameters (root= is set by the installer):" 8 70 "$KERNEL_ARGS") && KERNEL_ARGS=$a
 	true
@@ -789,6 +789,10 @@ kernel() {
 	if as_user "~/usrsideos/usrkrnl/setup --base ~/.config/usrkrnl/base.config --modules ~/.config/usrkrnl/iso-lsmod --cmdline '$KERNEL_ARGS' --label UsrsideOS --bootnext"; then
 		install -Dm755 "$HERE/files/usrkrnl-confirm" "$MNT/usr/local/bin/usrkrnl-confirm"
 		os_confirm_service
+		# the distribution kernel + initramfs from now on only as a frozen emergency backup:
+		# package held, no initramfs is ever generated again (not even by firmware updates)
+		log "Freezing the $OS_NAME kernel as emergency backup"
+		os_freeze_kernel || warn "the $OS_NAME kernel could not be frozen; updates may still rebuild it (see the log)"
 	else
 		log "usrkrnl build failed"; touch /tmp/usrsideos-no-usrkrnl
 	fi
@@ -826,7 +830,7 @@ finish_msg() {
 	if [[ -e /tmp/usrsideos-no-usrkrnl ]]; then
 		m+="\n\nusrkrnl could not be built – the $OS_NAME kernel is used.\nTry again later: ~/usrsideos/usrkrnl/setup"
 	elif ((USRKRNL)); then
-		m+="\nThe first boot uses usrkrnl; if it works, usrkrnl becomes the default.\nOtherwise the next boot uses the $OS_NAME kernel."
+		m+="\nThe first boot uses usrkrnl; if it works, usrkrnl becomes the default.\nOtherwise the next boot uses the $OS_NAME kernel.\nThe $OS_NAME kernel stays a frozen emergency backup (no updates)."
 	fi
 	if [[ -s $NOTEFILE ]]; then
 		m+="\n\nNote:"

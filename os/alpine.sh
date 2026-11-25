@@ -193,6 +193,18 @@ os_kernel_hook() {
 	ROOT_CMDLINE=${ROOT_CMDLINE/root=PARTUUID=$PARTUUID/root=UUID=$uuid}
 }
 
+# with usrkrnl: pin linux-lts to the installed version in the world file. mkinitfs' own trigger is
+# off already, without our hook kernel-hooks does nothing: no initramfs is built again.
+os_freeze_kernel() {
+	local v
+	v=$(awk -v p="linux-$KFLAVOR" '/^P:/ { n = substr($0, 3) } /^V:/ && n == p { print substr($0, 3); exit }' \
+		"$MNT/lib/apk/db/installed")
+	[[ -n $v ]] || return 1
+	sed -i "s/^linux-$KFLAVOR\$/linux-$KFLAVOR=$v/" "$MNT/etc/apk/world"
+	grep -qx "linux-$KFLAVOR=$v" "$MNT/etc/apk/world" || return 1
+	rm -f "$MNT/etc/kernel-hooks.d/50-usrside.hook"
+}
+
 os_hopd_service() {
 	install -Dm755 "$HERE/files/hopd.openrc" "$MNT/etc/init.d/hopd"
 	os_enable hopd

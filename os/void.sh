@@ -170,6 +170,18 @@ EOF
 	[[ -f $MNT/boot/vmlinuz-void && -f $MNT/boot/initramfs-void.img ]] || die "kernel/initramfs missing in /boot"
 }
 
+# with usrkrnl: hold the kernel packages (meta package, series, headers) at the installed version.
+# dracut only runs from the kernel packages' post-install hooks, so no initramfs is built again;
+# our copy hook goes, nothing may overwrite the backup.
+os_freeze_kernel() {
+	local held
+	held=$(chroot "$MNT" xbps-query -l | awk '{ print $2 }' | sed -nE 's/^(linux([0-9]+\.[0-9]+)?(-headers)?)-[0-9][^-]*_[0-9]+$/\1/p')
+	[[ -n $held ]] || return 1
+	# shellcheck disable=SC2086  # list of package names
+	in_target xbps-pkgdb -m hold $held || return 1
+	rm -f "$MNT/etc/kernel.d/post-install/60-usrside"
+}
+
 os_hopd_service() {
 	install -Dm755 "$HERE/files/hopd.run" "$MNT/etc/sv/hopd/run"
 	os_enable hopd

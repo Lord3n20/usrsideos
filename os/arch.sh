@@ -168,6 +168,17 @@ os_community() {
 
 os_kernel_hook() { :; }   # pacman installs /boot/vmlinuz-linux under a fixed name already
 
+# with usrkrnl: keep linux (+ headers for DKMS) at the installed version and never rebuild the
+# initramfs. The mkinitcpio hook also runs on firmware, systemd, dkms ... updates; a hook of the
+# same name in /etc/pacman.d/hooks that points to /dev/null switches it off.
+os_freeze_kernel() {
+	sed -i 's/^#\?IgnorePkg *=.*/IgnorePkg   = linux linux-headers/' "$MNT/etc/pacman.conf"
+	grep -q '^IgnorePkg   = linux linux-headers$' "$MNT/etc/pacman.conf" || return 1
+	mkdir -p "$MNT/etc/pacman.d/hooks"
+	ln -sf /dev/null "$MNT/etc/pacman.d/hooks/90-mkinitcpio-install.hook"
+	ln -sf /dev/null "$MNT/etc/pacman.d/hooks/60-mkinitcpio-remove.hook"
+}
+
 os_hopd_service() {
 	install -Dm644 "$HERE/files/hopd.service" "$MNT/etc/systemd/system/hopd.service"
 	os_enable hopd

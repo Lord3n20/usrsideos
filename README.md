@@ -131,7 +131,8 @@ usrkrnl has no initramfs, so it builds the root filesystem into the kernel (`CON
 ## Booting
 
 - The distribution kernel (with initramfs) is always there as the fallback entry
-  "UsrsideOS (linux|void|gentoo|alpine kernel)"; a kernel hook keeps it under a fixed name in `/boot`.
+  "UsrsideOS (linux|void|gentoo|alpine kernel)"; a kernel hook keeps it under a fixed name in `/boot`
+  (with usrkrnl only during the installation, see below).
 - `/boot` is the 1 GiB EFI partition. Void and Gentoo get a host-only initramfs, and their kernel
   hook removes old kernels (Void: those no package owns any more, Gentoo: all but the two newest);
   the running kernel always stays. On Void do not run `vkpurge rm all`: it would also delete the
@@ -140,8 +141,18 @@ usrkrnl has no initramfs, so it builds the root filesystem into the kernel (`CON
   builds the initramfs with mkinitfs (only the drivers for the root filesystem, no host-only mode) and
   puts the CPU microcode in front of it; a microcode update alone is picked up with the next kernel
   update (or `apk fix linux-lts`).
-- The first reboot uses usrkrnl **once**. If it boots, `usrkrnl-confirm` makes it the default.
-  If it does not, the next boot uses the distribution kernel again.
+- The first reboot uses usrkrnl **once**. If it boots, `usrkrnl-confirm` makes it the default
+  (BootOrder: usrkrnl, then the distribution kernel). If it does not, the next boot uses the
+  distribution kernel again.
+- With usrkrnl the distribution kernel is a **frozen emergency backup from the installation**: it is
+  not updated any more and no initramfs is generated again, not even by firmware or other package
+  updates (`linux-firmware` keeps being updated). Held: Arch `IgnorePkg = linux linux-headers` in
+  `/etc/pacman.conf` (mkinitcpio hooks off in `/etc/pacman.d/hooks`), Void `xbps-pkgdb -m hold`
+  on the `linux*` packages, Gentoo `/etc/portage/package.mask/usrside-kernel` (plus
+  `-dist-kernel -initramfs` for linux-firmware/intel-microcode), Alpine `linux-lts=<version>` in
+  `/etc/apk/world`. Boot it once with `sudo efibootmgr -n XXXX` (XXXX = the fallback entry).
+  If neither kernel boots any more: the live USB stick. Without usrkrnl (or if its build failed)
+  the distribution kernel is updated as usual.
 - New hardware later? Plug the device in, use it, then run `~/usrsideos/usrkrnl/setup`.
 - Kernel update: `git -C ~/usrsideos pull && ~/usrsideos/usrkrnl/setup`.
 

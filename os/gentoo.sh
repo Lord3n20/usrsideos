@@ -202,6 +202,23 @@ EOF
 	[[ -f $MNT/boot/vmlinuz-gentoo && -f $MNT/boot/initramfs-gentoo.img ]] || die "kernel/initramfs missing in /boot"
 }
 
+# with usrkrnl: mask newer kernels (and the matching virtual, so modules such as nvidia-drivers
+# keep building for the installed one). linux-firmware and intel-microcode rebuild the initramfs
+# of every dist-kernel on update (USE dist-kernel) or write their own early cpio to /boot (USE
+# initramfs): both off. Without the copy hook installkernel has nothing to overwrite.
+os_freeze_kernel() {
+	local k v
+	k=$(cd "$MNT/var/db/pkg" && ls -d sys-kernel/gentoo-kernel-bin-* 2>/dev/null | sort -V | tail -n1 || true)
+	v=$(cd "$MNT/var/db/pkg" && ls -d virtual/dist-kernel-* 2>/dev/null | sort -V | tail -n1 || true)
+	[[ -n $k && -n $v ]] || return 1
+	mkdir -p "$MNT/etc/portage/package.mask"
+	printf '# UsrsideOS: frozen emergency kernel, usrkrnl is the real one\n>%s\n>%s\n' "$k" "$v" \
+		>"$MNT/etc/portage/package.mask/usrside-kernel"
+	printf 'sys-kernel/linux-firmware -dist-kernel -initramfs\nsys-firmware/intel-microcode -dist-kernel -initramfs\n' \
+		>>"$MNT/etc/portage/package.use/usrside"
+	rm -f "$MNT/etc/kernel/postinst.d/95-usrside.install"
+}
+
 os_hopd_service() {
 	install -Dm755 "$HERE/files/hopd.openrc" "$MNT/etc/init.d/hopd"
 	os_enable hopd
