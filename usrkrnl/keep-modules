@@ -1,0 +1,67 @@
+# Modules that localmodconfig never removes, whatever was loaded when setup ran.
+# One module name per line (as in lsmod; - and _ are the same), # starts a comment.
+# They are kept with the value of the base config (usually =m), so only drivers the
+# base config has can be kept. Unknown names are ignored.
+#
+# Why: the live system of an installer often has no GPU, no Bluetooth adapter or no
+# sound device in use (a VM, the Gentoo minimal ISO without DRM), and an eGPU, a dock
+# or a headset may simply not be plugged in. Without these the desktop does not start.
+
+# graphics: DRM core, firmware framebuffer, GPUs (Intel, AMD, NVIDIA nouveau), VMs
+drm
+drm_kms_helper
+simpledrm
+i915
+xe
+amdgpu
+nouveau
+virtio_gpu
+bochs
+qxl
+vmwgfx
+
+# Bluetooth (bluetoothd fails without the bluetooth module)
+bluetooth
+btusb
+btintel
+btrtl
+btbcm
+btmtk
+
+# input: USB/I2C keyboards, mice, touchpads, touchscreens
+hid_generic
+usbhid
+i2c_hid
+i2c_hid_acpi
+hid_multitouch
+
+# sound: HDA, Intel/AMD SOF (newer laptops), USB audio, VMs
+snd_hda_intel
+snd_intel_dspcfg
+snd_hda_codec_generic
+snd_hda_codec_hdmi
+snd_hda_codec_intelhdmi
+snd_hda_codec_atihdmi
+snd_hda_codec_nvhdmi
+snd_hda_codec_alc269
+snd_hda_codec_alc662
+snd_hda_codec_alc882
+snd_hda_codec_conexant
+snd_sof_pci_intel_cnl
+snd_sof_pci_intel_tgl
+snd_sof_pci_intel_mtl
+snd_sof_pci_intel_lnl
+snd_sof_pci_intel_ptl
+snd_soc_skl_hda_dsp
+snd_soc_sof_sdw
+snd_sof_amd_rembrandt
+snd_sof_amd_acp63
+snd_sof_amd_acp70
+snd_usb_audio
+virtio_snd
+
+# Thunderbolt/USB4 (eGPU, docks), USB-C
+thunderbolt
+typec_ucsi
+ucsi_acpi
+xhci_pci

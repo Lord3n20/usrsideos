@@ -170,8 +170,8 @@ cp "$TREE/.config" "$WORK/base.config"
 
 # module name -> CONFIG symbol, from the obj-$(CONFIG_X) += name.o lines of the tree
 find "$TREE"/{arch/x86,block,crypto,drivers,fs,lib,mm,net,security,sound,virt} \( -name Makefile -o -name Kbuild \) -print0 |
-	xargs -0 awk 'match($0, /obj-\$\(CONFIG_[A-Z0-9_]+\)[ \t]*[+:]?=/) {
-		sym = substr($0, RSTART + 6, RLENGTH - 6); sub(/\).*/, "", sym)
+	xargs -0 awk 'match($0, /obj-\$[({]CONFIG_[A-Z0-9_]+[)}][ \t]*[+:]?=/) {   # $(CONFIG_X) or ${CONFIG_X} (thunderbolt)
+		sym = substr($0, RSTART + 6, RLENGTH - 6); sub(/[)}].*/, "", sym)
 		n = split(substr($0, RSTART + RLENGTH), w, /[ \t\\]+/)
 		for (i = 1; i <= n; i++) if (w[i] ~ /\.o$/) {
 			m = w[i]; sub(/\.o$/, "", m); sub(/.*\//, "", m); gsub(/-/, "_", m); print m, sym
@@ -196,12 +196,15 @@ mkdir -p "${STATE%/*}"
 	cat "$STATE" "${MODLISTS[@]}" 2>/dev/null || true
 } | awk '$1 != "Module" && NF { print $1 }' | sort -u >"$STATE.new"
 mv "$STATE.new" "$STATE"
+# drivers that are always kept (GPU, Bluetooth, input, sound, Thunderbolt), see keep-modules
+sed 's/#.*//' "$SELF/keep-modules" | awk 'NF { gsub(/-/, "_", $1); print $1 }' | sort -u >"$WORK/keep"
+sort -u "$STATE" "$WORK/keep" >"$WORK/known"
 if ((REMIN == 0)) && grep -qx 'CONFIG_LOCALVERSION="-usr"' "$TREE/.config"; then
 	msg "Base is already a usrkrnl config, keeping its module selection (--reminimize to change)"
 	mk -s olddefconfig >/dev/null
 else
-	msg "Minimizing to $(wc -l <"$STATE") known modules (localmodconfig, list: $STATE)"
-	awk '{ print $1, 0, 0 }' "$STATE" >"$WORK/lsmod"
+	msg "Minimizing to $(wc -l <"$STATE") known modules + $(wc -l <"$WORK/keep") always kept (localmodconfig, list: $STATE)"
+	awk '{ print $1, 0, 0 }' "$WORK/known" >"$WORK/lsmod"
 	mk -s olddefconfig >/dev/null   # new symbols (e.g. after switching gcc -> clang) get defaults
 	mk -s LSMOD="$WORK/lsmod" localmodconfig </dev/null >"$WORK/localmodconfig.log" 2>&1 ||
 		die "localmodconfig failed, see $WORK/localmodconfig.log"
@@ -228,7 +231,7 @@ else
 			sym=$(mod2sym "$m")
 			[[ -n $sym ]] && ! grep -qE "^CONFIG_$sym=[ym]" "$TREE/.config" &&
 				grep -qE "^CONFIG_$sym=[ym]" "$WORK/base.config" && missing+=("$sym")
-		done <"$STATE"
+		done <"$WORK/known"
 		((${#missing[@]})) || break
 		todo=("${missing[@]}")
 		for sym in "${missing[@]}"; do todo+=($(kconfig_deps "$sym")); done
@@ -243,6 +246,16 @@ else
 	done
 	if ((restored)); then msg "Restored $restored options that localmodconfig dropped"; fi
 	for sym in "${missing[@]}"; do msg "note: CONFIG_$sym not kept (helper option, nothing selects it in this config)"; done
+	# keep-modules can only keep what the base config has. Installer ISOs may have a stripped
+	# kernel (Gentoo minimal ISO: no DRM at all), then the desktop would not start.
+	nobase=()
+	while read -r m; do
+		sym=$(mod2sym "$m")
+		[[ -n $sym ]] && ! grep -qE "^CONFIG_$sym=[ym]" "$WORK/base.config" && nobase+=("$m")
+	done <"$WORK/keep"
+	if ((${#nobase[@]})); then msg "note: not in the base config, cannot be kept: ${nobase[*]}"; fi
+	grep -qE '^CONFIG_DRM=[ym]' "$TREE/.config" ||
+		warn "no graphics (CONFIG_DRM) in the base config $BASE: no /dev/dri, Wayland will not start. Use --base with the config of your distribution's kernel."
 fi
 
 # out-of-tree DKMS modules: their kernel dependencies are not visible in lsmod

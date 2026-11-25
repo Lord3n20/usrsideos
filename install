@@ -673,8 +673,7 @@ desktop() {
 			*.bz2) bzip2 -dc "$src" ;;
 			*.gz) gzip -dc "$src" ;;
 			*.zst) zstd -qdc "$src" ;;
-			# curl from the target: not every live ISO has curl or wget (Void has neither)
-			"") os_chroot curl -fsSL https://raw.githubusercontent.com/YaLTeR/niri/main/resources/default-config.kdl 2>/dev/null || true ;;
+			"") niri_default_config ;;
 			*) cat "$src" ;;
 		esac | sed 's/"alacritty"/"kitty"/g' >"$c"
 		if [[ -s $c ]]; then
@@ -702,6 +701,21 @@ EOF
 }
 
 # UsrsideOS changes to niri's default config, depending on the selected options
+# default config of the installed niri release (Gentoo's GURU ebuild ships none). The one of
+# the main branch can use newer syntax that this niri cannot parse ("release" binds,
+# move-column-to-new-workspace-* in 26.04), so main is only the last resort.
+# curl from the target: not every live ISO has curl or wget (Void has neither).
+niri_default_config() {
+	local v url=https://raw.githubusercontent.com/YaLTeR/niri
+	v=$(os_chroot niri --version 2>/dev/null | awk '{ print $2; exit }' || true)
+	if [[ $v =~ ^[0-9]+(\.[0-9]+)+$ ]] && os_chroot curl -fsSL "$url/v$v/resources/default-config.kdl" 2>/dev/null; then
+		log "niri $v: default config of v$v downloaded"
+		return 0
+	fi
+	log "niri ${v:-?}: no default config for this release, taking the one of the main branch"
+	os_chroot curl -fsSL "$url/main/resources/default-config.kdl" 2>/dev/null || true
+}
+
 niri_config() {
 	local c=$1 l='"swaylock" "-f" "-c" "1e2030"'   # same lock screen on every backend (swaybg colour)
 	[[ -x $MNT/usr/bin/waybar ]] || sed -i 's/^spawn-at-startup "waybar"/\/\/ spawn-at-startup "waybar"/' "$c"
@@ -774,15 +788,18 @@ kernel() {
 	((USRKRNL)) || return 0
 
 	log "Downloading and building usrkrnl (takes a while)"
-	# base = config of the running ISO kernel (or the installed one), modules = what the ISO loaded for this hardware
+	# base = config of the installed distribution kernel (or of the running ISO kernel),
+	# modules = what the ISO loaded for this hardware. The installed one comes first: the
+	# Gentoo minimal ISO runs a stripped kernel without DRM, so nothing could keep the
+	# GPU drivers (no /dev/dri, niri does not start). Arch ships no config file and uses
+	# the ISO kernel, which is the normal Arch kernel.
 	cfg=$MNT/home/$USERNAME/.config/usrkrnl
 	mkdir -p "$cfg"
-	if [[ -r /proc/config.gz ]]; then zcat /proc/config.gz >"$cfg/base.config"
-	else
-		# ls fails for the path that does not exist; with pipefail that would end the installation
-		local c; c=$(ls -t "$MNT"/boot/config-* "$MNT"/usr/src/linux/.config 2>/dev/null | head -n1 || true)
-		[[ -n $c ]] || die "no kernel config found as base for usrkrnl"
-		cp "$c" "$cfg/base.config"
+	# ls fails for the paths that do not exist; with pipefail that would end the installation
+	local c; c=$(ls -t "$MNT"/boot/config-* "$MNT"/usr/src/linux-*/.config "$MNT"/usr/src/linux/.config 2>/dev/null | head -n1 || true)
+	if [[ -n $c ]]; then cp "$c" "$cfg/base.config"; log "usrkrnl base config: ${c#"$MNT"}"
+	elif [[ -r /proc/config.gz ]]; then zcat /proc/config.gz >"$cfg/base.config"; log "usrkrnl base config: /proc/config.gz (ISO kernel)"
+	else die "no kernel config found as base for usrkrnl"
 	fi
 	lsmod >"$cfg/iso-lsmod"
 	os_chroot chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.config"
