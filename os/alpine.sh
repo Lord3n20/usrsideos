@@ -27,8 +27,8 @@ BASE=(alpine-base "linux-$KFLAVOR" linux-firmware mkinitfs kernel-hooks eudev do
 BROWSER_NAME=chromium
 POLKIT_SPAWN='"/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1"'   # hyprpolkitagent needs systemd --user
 BUILD_PKGS=(build-base linux-headers)   # compiler + make; hopd needs the kernel headers (netlink)
-KERNEL_PKGS=(clang lld llvm bc flex bison perl pahole openssl openssl-dev elfutils-dev zstd patch xz coreutils sed grep
-	cpio diffutils findutils findmnt blkid lsblk kmod iucode-tool python3)   # usrkrnl only; GNU coreutils/sed/grep + python3: kernel scripts (readlink -m, grep --include, BTF)
+KERNEL_PKGS=(clang lld llvm bc flex bison perl openssl openssl-dev elfutils-dev zstd patch xz coreutils sed grep
+	cpio diffutils findutils findmnt blkid lsblk kmod iucode-tool python3)   # usrkrnl only; GNU coreutils/sed/grep: kernel scripts (readlink -m, grep --include); python3: initcall order with ThinLTO
 FS_PKG_btrfs=btrfs-progs
 FS_PKG_xfs=xfsprogs
 UCODE_INTEL=intel-ucode

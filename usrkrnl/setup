@@ -85,13 +85,13 @@ done
 # an installed UsrsideOS says ID=usrside, its base system is in ID_LIKE (arch, void, gentoo or alpine)
 DISTRO=$(. /etc/os-release 2>/dev/null; if [[ ${ID:-} == usrside ]]; then echo "${ID_LIKE:-arch}"; else echo "${ID:-unknown}"; fi)
 case $DISTRO in
-	arch) HINT="pacman -S clang lld llvm base-devel bc pahole cpio perl openssl zstd curl efibootmgr" ;;
-	void) HINT="xbps-install clang lld llvm base-devel bc flex bison pahole cpio perl openssl-devel elfutils-devel zstd curl python3 efibootmgr" ;;
-	alpine) HINT="apk add clang lld llvm build-base linux-headers bc flex bison perl pahole openssl-dev elfutils-dev zstd curl patch xz cpio coreutils sed grep diffutils findutils findmnt blkid lsblk kmod iucode-tool python3 efibootmgr" ;;
-	gentoo) HINT="emerge llvm-core/clang llvm-core/lld sys-devel/bc dev-util/pahole app-arch/cpio net-misc/curl sys-boot/efibootmgr" ;;
-	*) HINT="install clang, lld, llvm, make, bc, flex, bison, perl, pahole, openssl and libelf headers, zstd, curl, efibootmgr" ;;
+	arch) HINT="pacman -S clang lld llvm base-devel bc cpio perl python openssl zstd curl efibootmgr" ;;
+	void) HINT="xbps-install clang lld llvm base-devel bc flex bison cpio perl openssl-devel elfutils-devel zstd curl python3 efibootmgr" ;;
+	alpine) HINT="apk add clang lld llvm build-base linux-headers bc flex bison perl openssl-dev elfutils-dev zstd curl patch xz cpio coreutils sed grep diffutils findutils findmnt blkid lsblk kmod iucode-tool python3 efibootmgr" ;;
+	gentoo) HINT="emerge llvm-core/clang llvm-core/lld sys-devel/bc app-arch/cpio net-misc/curl sys-boot/efibootmgr" ;;
+	*) HINT="install clang, lld, llvm, make, bc, flex, bison, perl, python3, openssl and libelf headers, zstd, curl, efibootmgr" ;;
 esac
-for t in clang ld.lld llvm-ar make bc flex bison perl pahole openssl zstd findmnt blkid lsblk modinfo curl patch tar xz; do
+for t in clang ld.lld llvm-ar make bc flex bison perl python3 openssl zstd findmnt blkid lsblk modinfo curl patch tar xz; do
 	command -v "$t" >/dev/null || die "missing tool: $t ($HINT)"
 done
 if command -v sudo >/dev/null; then SUDO=sudo

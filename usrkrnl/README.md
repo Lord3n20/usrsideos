@@ -22,7 +22,7 @@ fragment ([`usrkrnl.config`](usrkrnl.config)), the patches and the `setup` scrip
 - x86_64 with UEFI, root filesystem on a plain GPT partition
   (no LUKS/LVM/RAID: those need an initramfs)
 - Any distribution (package hints for Arch, Void and Gentoo built in; sudo or doas):
-  `clang lld llvm make bc flex bison perl pahole cpio`, openssl + libelf headers, `zstd curl efibootmgr`,
+  `clang lld llvm make bc flex bison perl python3 cpio`, openssl + libelf headers, `zstd curl efibootmgr`,
   optionally `dkms` for out-of-tree drivers (nvidia, ...); on Gentoo `emerge @module-rebuild` is run instead
 
 ## Usage
