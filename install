@@ -786,6 +786,7 @@ kernel() {
 	fi
 	lsmod >"$cfg/iso-lsmod"
 	os_chroot chown -R "$USERNAME:$USERNAME" "/home/$USERNAME/.config"
+	local start why; start=$(($(wc -l <"$LOG") + 1))
 	if as_user "~/usrsideos/usrkrnl/setup --base ~/.config/usrkrnl/base.config --modules ~/.config/usrkrnl/iso-lsmod --cmdline '$KERNEL_ARGS' --label UsrsideOS --bootnext"; then
 		install -Dm755 "$HERE/files/usrkrnl-confirm" "$MNT/usr/local/bin/usrkrnl-confirm"
 		os_confirm_service
@@ -794,7 +795,10 @@ kernel() {
 		log "Freezing the $OS_NAME kernel as emergency backup"
 		os_freeze_kernel || warn "the $OS_NAME kernel could not be frozen; updates may still rebuild it (see the log)"
 	else
-		log "usrkrnl build failed"; touch /tmp/usrsideos-no-usrkrnl
+		# the reason = last error line of usrkrnl/setup in the log (without colour codes)
+		why=$(tail -n +"$start" "$LOG" | sed 's/\x1b\[[0-9;]*m//g' | grep -E '==> ERROR:|usrkrnl/setup: unexpected error' | tail -n1 | sed 's/^==> ERROR: //' || true)
+		log "WARNING: usrkrnl build failed: ${why:-see above}"
+		echo "${why:-unknown, see the log}" >/tmp/usrsideos-no-usrkrnl
 	fi
 }
 
@@ -828,7 +832,7 @@ finish_msg() {
 	local m="UsrsideOS ($OS_NAME) is installed.\n\nRemove the USB stick and reboot."
 	opt_on desktop || m+="\n\nNo desktop selected: after the reboot you get a text login. Wi-Fi: iwctl, wired network works by itself.\nLater: install niri etc. with the package manager, or reinstall with the desktop profile."
 	if [[ -e /tmp/usrsideos-no-usrkrnl ]]; then
-		m+="\n\nusrkrnl could not be built – the $OS_NAME kernel is used.\nTry again later: ~/usrsideos/usrkrnl/setup"
+		m+="\n\nWARNING: usrkrnl could not be built – the $OS_NAME kernel is used.\nReason: $(cat /tmp/usrsideos-no-usrkrnl)\nDetails: /var/log/usrsideos-install.log and ~/.local/src/usrkrnl/linux-*/.usrkrnl/build.log\nTry again later: ~/usrsideos/usrkrnl/setup"
 	elif ((USRKRNL)); then
 		m+="\nThe first boot uses usrkrnl; if it works, usrkrnl becomes the default.\nOtherwise the next boot uses the $OS_NAME kernel.\nThe $OS_NAME kernel stays a frozen emergency backup (no updates)."
 	fi

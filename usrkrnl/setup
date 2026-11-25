@@ -88,15 +88,35 @@ case $DISTRO in
 	arch) HINT="pacman -S clang lld llvm base-devel bc cpio perl python openssl zstd curl efibootmgr" ;;
 	void) HINT="xbps-install clang lld llvm base-devel bc flex bison cpio perl openssl-devel elfutils-devel zstd curl python3 efibootmgr" ;;
 	alpine) HINT="apk add clang lld llvm build-base linux-headers bc flex bison perl openssl-dev elfutils-dev zstd curl patch xz cpio coreutils sed grep diffutils findutils findmnt blkid lsblk kmod iucode-tool python3 efibootmgr" ;;
-	gentoo) HINT="emerge llvm-core/clang llvm-core/lld sys-devel/bc app-arch/cpio net-misc/curl sys-boot/efibootmgr" ;;
+	gentoo) HINT="emerge llvm-core/clang llvm-core/lld llvm-core/llvm sys-devel/bc app-arch/cpio net-misc/curl sys-boot/efibootmgr" ;;
 	*) HINT="install clang, lld, llvm, make, bc, flex, bison, perl, python3, openssl and libelf headers, zstd, curl, efibootmgr" ;;
 esac
-for t in clang ld.lld llvm-ar make bc flex bison perl python3 openssl zstd findmnt blkid lsblk modinfo curl patch tar xz; do
+for t in clang make bc flex bison perl python3 openssl zstd findmnt blkid lsblk modinfo curl patch tar xz; do
 	command -v "$t" >/dev/null || die "missing tool: $t ($HINT)"
 done
+# kbuild is called with LLVM=<dir>/ instead of LLVM=1, so every LLVM tool has an absolute path.
+# sudo's secure_path (and doas) drop directories that only the user's PATH has, e.g. Gentoo's
+# /usr/lib/llvm/NN/bin from /etc/env.d; modules_install as root then fails on llvm-strip.
+LLVM_TOOLS=(clang ld.lld llvm-ar llvm-nm llvm-objcopy llvm-objdump llvm-readelf llvm-strip)
+LLVMDIR=""
+c=$(command -v clang)
+# the directory in PATH (e.g. /usr/bin with symlinks) or the one clang really lives in
+for d in "$(readlink -f "${c%/*}")" "$(dirname "$(readlink -f "$c")")"; do
+	for t in "${LLVM_TOOLS[@]}"; do [[ -x $d/$t ]] || { miss=$t; continue 2; }; done
+	LLVMDIR=$d; break
+done
+[[ -n $LLVMDIR ]] || die "missing tool: $miss next to $c (all of ${LLVM_TOOLS[*]} in one directory; $HINT)"
 if command -v sudo >/dev/null; then SUDO=sudo
 elif command -v doas >/dev/null; then SUDO=doas
 else die "neither sudo nor doas found"; fi
+# the install steps run as root with root's PATH: check there what they call themselves
+# (make, depmod and zstd for modules_install with CONFIG_MODULE_COMPRESS_ZSTD, the rest below)
+root_tools() {
+	local miss
+	miss=$($SUDO sh -c 'for t; do command -v "$t" >/dev/null || printf " %s" "$t"; done' sh \
+		make depmod zstd install ln mv sha256sum tee blkid efibootmgr) || die "$SUDO sh does not work"
+	[[ -z $miss ]] || die "missing for root (PATH of $SUDO):$miss ($HINT)"
+}
 
 # ---------------------------------------------------------------- 0. source
 if [[ -z $TREE ]]; then
@@ -127,7 +147,7 @@ msg "Source: $TREE"
 WORK=$TREE/.usrkrnl
 
 # LOCALVERSION= (empty) stops kbuild from appending "+" for an untagged git tree
-MKARGS=(-C "$TREE" LLVM=1 LOCALVERSION=)
+MKARGS=(-C "$TREE" LLVM="$LLVMDIR/" LOCALVERSION=)
 mk() { make "${MKARGS[@]}" "$@"; }
 kconf() { "$TREE/scripts/config" --file "$TREE/.config" "$@"; }
 mkdir -p "$WORK"
@@ -389,6 +409,8 @@ msg "Config ready: $KREL (copy in $WORK/config-$KREL)"
 [[ $STEP == config ]] && exit 0
 
 # ---------------------------------------------------------------- 9. build
+# before the long build: the install steps afterwards must find their tools as root
+if [[ $STEP == all ]]; then root_tools; fi
 # one job per thread, but at most one per GiB of available memory (clang with ThinLTO; the OOM
 # killer ends a compiler or the linker otherwise, e.g. on 8 GB machines or a live system in RAM)
 jobs=$(nproc)
