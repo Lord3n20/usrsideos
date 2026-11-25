@@ -3,10 +3,10 @@
 A very small vibe-coded Linux system with its own linux-kernel that is
 tailored to the machine during installation. It got made by vibe-coding a lot of improvements for gaming and laptop usage on Arch Linux and getting those to work on other Distros as well.
 
-**Base system:** Arch Linux, Void Linux or Gentoo – the installer detects it from the ISO you boot.
+**Base system:** Arch Linux, Void Linux, Gentoo or Alpine Linux – the installer detects it from the ISO you boot.
 
-> **Gentoo is experimental and untested.** Arch and Void have passed full test installations;
-> on a Gentoo ISO the installer asks before it continues.
+> **Gentoo and Alpine are experimental and untested.** Arch and Void have passed full test installations;
+> on a Gentoo or Alpine ISO the installer asks before it continues.
 
 **Always installed:** base system, kernel + firmware + microcode, sudo, efibootmgr, git, the tools of the
 root filesystem and the network (iwd for Wi-Fi, DHCP for cable). Everything else is chosen in the
@@ -21,6 +21,7 @@ Boot the ISO of the base system in **UEFI mode**, connect to the internet, then:
 | Arch | `pacman -Sy --noconfirm git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
 | Void (glibc) | `xbps-install -Sy git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` |
 | Gentoo minimal (experimental) | `wget https://github.com/Lord3n20/usrsideos/archive/main.tar.gz && tar xf main.tar.gz && usrsideos-main/install` |
+| Alpine standard (experimental) | log in as `root`, then `setup-interfaces -r && setup-apkrepos -c1 && apk add bash git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install` (setup-interfaces also asks for Wi-Fi) |
 
 Set disk, user etc. in the menu, then **Install**. The disk is erased completely:
 1 GiB EFI partition and the rest as the root filesystem (default btrfs with `@`, `@home`, zstd, see below).
@@ -34,12 +35,14 @@ Set disk, user etc. in the menu, then **Install**. The disk is erased completely
 | Filesystem | btrfs (subvolumes, compression) or XFS, see [Filesystem](#filesystem) |
 | Build usrkrnl | kernel with only this machine's drivers, BORE, clang ThinLTO, no initramfs (10–40 min) |
 
-| | Arch | Void | Gentoo |
-|---|---|---|---|
-| Init | systemd | runit | OpenRC |
-| Bootstrap | pacstrap | xbps-install | stage3 (desktop-openrc) + binary packages |
-| DNS / time | systemd-resolved / timesyncd | openresolv / chrony | openresolv / chrony |
-| Install time | ~10 min | ~10 min | ~1 h+ (overlay packages are compiled) |
+| | Arch | Void | Gentoo | Alpine |
+|---|---|---|---|---|
+| Init | systemd | runit | OpenRC | OpenRC |
+| libc | glibc | glibc | glibc | musl |
+| Bootstrap | pacstrap | xbps-install | stage3 (desktop-openrc) + binary packages | apk --root (main + community) |
+| Kernel / initramfs | linux / mkinitcpio | linux / dracut | gentoo-kernel-bin / dracut | linux-lts / mkinitfs |
+| DNS / time | systemd-resolved / timesyncd | openresolv / chrony | openresolv / chrony | openresolv / chrony |
+| Install time | ~10 min | ~10 min | ~1 h+ (overlay packages are compiled) | ~10 min |
 
 Everything distribution specific lives in `os/<id>.sh`; `install` itself is shared.
 The installer keeps a copy of this repository in `~/usrsideos` for later rebuilds.
@@ -63,34 +66,36 @@ Every option can be switched on its own; what an option needs is switched on aut
 (waybar, rofi, mako, lock screen, polkit agent and swaybg need the niri desktop, the PulseAudio Bluetooth
 module needs sound and Bluetooth, AUR packages need yay). Answers-file key = the key in capitals.
 
-| Key | Option | `desktop` | Arch | Void | Gentoo (untested⁴) |
-|---|---|---|---|---|---|
-| `desktop` | niri, kitty, xwayland-satellite, xdg-desktop-portal-gnome, wl-clipboard, Noto/DejaVu/Liberation fonts | ✓ | ✓ | ✓ | ✓ |
-| `waybar` | top bar | ✓ | ✓ | ✓ | ✓ |
-| `rofi` | app launcher on Mod+Space (replaces fuzzel on Mod+D) | ✓ | ✓ | ✓ | ✓ |
-| `mako` | notifications | ✓ | ✓ | ✓ | ✓ |
-| `lock` | lock screen on Mod+L + idle lock after 10 min, see [niri keys](#niri-keys) | ✓ | swaylock + swayidle | swaylock + swayidle | swaylock + swayidle |
-| `polkit` | polkit agent | ✓ | hyprpolkitagent | polkit-gnome¹ | polkit-gnome¹ |
-| `swaybg` | plain wallpaper colour | ✓ | ✓ | ✓ | ✓ |
-| `sound` | PulseAudio + pulsemixer (+ sof-firmware) | ✓ | ✓ | ✓ | ✓ |
-| `bluetooth` | bluez, service enabled | ✓ | ✓ | ✓ | ✓ |
-| `sound_bt` | PulseAudio Bluetooth module | ✓ | ✓ | –² | –² |
-| `ssh` | OpenSSH (server not enabled) | ✓ | ✓ | ✓ | ✓ |
-| `wireguard` | WireGuard tools | ✓ | ✓ | ✓ | ✓ |
-| `neovim` `btop` `fastfetch` `bashcomp` `fzf` `tmux` `less` `unzip` `wget` | one option each | ✓ | ✓ | ✓ | ✓ |
-| `pkgtools` | pacman-contrib + weekly paccache.timer | ✓ | ✓ | – | – |
-| `mpv` `zathura` `feh` | video, PDF, images | ✓ | ✓ | ✓ | ✓ |
-| `browser` | ungoogled-chromium (Void: chromium) | ✓ | AUR | ✓ | pf4public |
-| `yay` | AUR helper | ✓ | ✓ | – | – |
-| `intel_media` `nvidia` `bolt` `tuxedo` | Intel video acceleration, NVIDIA driver, Thunderbolt, TUXEDO drivers | if detected | ✓ (tuxedo: AUR) | ✓ | ✓ (no tuxedo) |
-| `printing` | CUPS + system-config-printer + simple-scan | | ✓ | ✓ | ✓ |
-| `fish` `office` `latex` | fish shell, LibreOffice, TeX Live base | | ✓ | ✓ | ✓ |
-| `games` | Steam + MangoHud (enables multilib) | | ✓ | –³ | –³ |
+| Key | Option | `desktop` | Arch | Void | Gentoo (untested⁴) | Alpine |
+|---|---|---|---|---|---|---|
+| `desktop` | niri, kitty, xwayland-satellite, xdg-desktop-portal-gnome, wl-clipboard, Noto/DejaVu/Liberation fonts | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `waybar` | top bar | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `rofi` | app launcher on Mod+Space (replaces fuzzel on Mod+D) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `mako` | notifications | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `lock` | lock screen on Mod+L + idle lock after 10 min, see [niri keys](#niri-keys) | ✓ | swaylock + swayidle | swaylock + swayidle | swaylock + swayidle | swaylock + swayidle |
+| `polkit` | polkit agent | ✓ | hyprpolkitagent | polkit-gnome¹ | polkit-gnome¹ | polkit-gnome¹ |
+| `swaybg` | plain wallpaper colour | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `sound` | PulseAudio + pulsemixer (+ sof-firmware) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `bluetooth` | bluez, service enabled | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `sound_bt` | PulseAudio Bluetooth module | ✓ | ✓ | –² | –² | ✓ |
+| `ssh` | OpenSSH (server not enabled) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `wireguard` | WireGuard tools | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `neovim` `btop` `fastfetch` `bashcomp` `fzf` `tmux` `less` `unzip` `wget` | one option each | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `pkgtools` | pacman-contrib + weekly paccache.timer | ✓ | ✓ | – | – | – |
+| `mpv` `zathura` `feh` | video, PDF, images | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `browser` | ungoogled-chromium (Void, Alpine: chromium) | ✓ | AUR | ✓ | pf4public | ✓ |
+| `yay` | AUR helper | ✓ | ✓ | – | – | – |
+| `intel_media` `nvidia` `bolt` `tuxedo` | Intel video acceleration, NVIDIA driver, Thunderbolt, TUXEDO drivers | if detected | ✓ (tuxedo: AUR) | ✓ | ✓ (no tuxedo) | intel_media, bolt⁵ |
+| `printing` | CUPS + system-config-printer + simple-scan | | ✓ | ✓ | ✓ | ✓ |
+| `fish` `office` `latex` | fish shell, LibreOffice, TeX Live base | | ✓ | ✓ | ✓ | ✓ |
+| `games` | Steam + MangoHud (enables multilib) | | ✓ | –³ | –³ | –⁶ |
 
-¹ hyprpolkitagent is not packaged for Void and needs systemd --user (Gentoo uses OpenRC).
+¹ hyprpolkitagent is not packaged for Void and needs systemd --user (Gentoo and Alpine use OpenRC).
 ² part of PulseAudio itself (Void) or its `bluetooth` USE flag (Gentoo).
 ³ Steam needs the multilib repositories (Void) or the steam-overlay (Gentoo); set them up yourself.
 ⁴ the Gentoo package atoms are checked in the Gentoo test phase.
+⁵ Alpine has no NVIDIA driver (glibc only; nouveau/NVK come with mesa) and the TUXEDO drivers only as a source package.
+⁶ Steam needs glibc.
 
 ### niri keys
 
@@ -106,7 +111,7 @@ UsrsideOS changes a few keys of niri's default config:
 
 Sound is PulseAudio. PipeWire may still come in as a dependency of the portal (screen sharing), but
 WirePlumber is configured not to touch the sound cards and nothing provides the pulse socket.
-Arch starts PulseAudio through its systemd user socket, Void and Gentoo with the niri session (or on
+Arch starts PulseAudio through its systemd user socket, Void, Gentoo and Alpine with the niri session (or on
 demand through autospawn).
 
 ## Filesystem
@@ -126,11 +131,15 @@ usrkrnl has no initramfs, so it builds the root filesystem into the kernel (`CON
 ## Booting
 
 - The distribution kernel (with initramfs) is always there as the fallback entry
-  "UsrsideOS (linux|void|gentoo kernel)"; a kernel hook keeps it under a fixed name in `/boot`.
+  "UsrsideOS (linux|void|gentoo|alpine kernel)"; a kernel hook keeps it under a fixed name in `/boot`.
 - `/boot` is the 1 GiB EFI partition. Void and Gentoo get a host-only initramfs, and their kernel
   hook removes old kernels (Void: those no package owns any more, Gentoo: all but the two newest);
   the running kernel always stays. On Void do not run `vkpurge rm all`: it would also delete the
   fixed-name copy `vmlinuz-void` (the next kernel update creates it again).
+- Alpine keeps one kernel per flavour anyway. Its hook (`/etc/kernel-hooks.d/50-usrside.hook`) also
+  builds the initramfs with mkinitfs (only the drivers for the root filesystem, no host-only mode) and
+  puts the CPU microcode in front of it; a microcode update alone is picked up with the next kernel
+  update (or `apk fix linux-lts`).
 - The first reboot uses usrkrnl **once**. If it boots, `usrkrnl-confirm` makes it the default.
   If it does not, the next boot uses the distribution kernel again.
 - New hardware later? Plug the device in, use it, then run `~/usrsideos/usrkrnl/setup`.
@@ -159,5 +168,5 @@ Commands: `hopd befehle`; to change settings, edit `/usr/local/src/hopd/config.h
 
 ## Limits
 
-- x86_64 with UEFI only. Void: glibc only. Gentoo: OpenRC only. No disk encryption (usrkrnl boots without initramfs).
+- x86_64 with UEFI only. Void: glibc only. Gentoo: OpenRC only. Alpine: Wi-Fi of the live ISO (wpa_supplicant) is not taken over, use `iwctl` after the reboot. No disk encryption (usrkrnl boots without initramfs).
 - The installer erases the chosen disk completely, no dual boot.

@@ -1,5 +1,5 @@
 #!/sbin/openrc-run
-# OpenRC service for hopd (Gentoo)
+# OpenRC service for hopd (Gentoo, Alpine)
 description="hopd – power, fans, eGPU, battery log"
 command=/usr/local/bin/hopd
 command_args="dienst"

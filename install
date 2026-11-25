@@ -5,6 +5,8 @@
 #   Void:   xbps-install -Sy git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install
 #   Gentoo: git is not on the minimal ISO, use the tarball:
 #           wget https://github.com/Lord3n20/usrsideos/archive/main.tar.gz && tar xf main.tar.gz && usrsideos-main/install
+#   Alpine: standard ISO, log in as root; network (Wi-Fi: asks for it) and a mirror first:
+#           setup-interfaces -r && setup-apkrepos -c1 && apk add bash git && git clone https://github.com/Lord3n20/usrsideos && usrsideos/install
 #
 # The base system is detected from the booted ISO; os/<id>.sh does everything distribution specific.
 # Menu like archinstall: set the options, then "Install".
@@ -39,8 +41,8 @@ if [[ ${1:-} == --answers ]]; then ANSWERS=$(readlink -f "${2:?--answers needs a
 
 LIVE_ID=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
 case $LIVE_ID in
-	arch|void|gentoo) OS=$LIVE_ID ;;
-	*) echo "Unsupported live system '${LIVE_ID:-unknown}'. Boot the Arch, Void or Gentoo ISO." >&2; exit 1 ;;
+	arch|void|gentoo|alpine) OS=$LIVE_ID ;;
+	*) echo "Unsupported live system '${LIVE_ID:-unknown}'. Boot the Arch, Void, Gentoo or Alpine ISO." >&2; exit 1 ;;
 esac
 # shellcheck source=os/arch.sh
 . "$HERE/os/$OS.sh"
@@ -167,7 +169,7 @@ online() {
 requirements() {
 	((EUID == 0)) || { echo "Please run as root from the live ISO." >&2; exit 1; }
 	[[ -d /sys/firmware/efi/efivars ]] || { echo "Only UEFI is supported (boot the machine in UEFI mode)." >&2; exit 1; }
-	online || { echo "No internet. Connect first (iwctl / wpa_supplicant / net-setup)." >&2; exit 1; }
+	online || { echo "No internet. Connect first (iwctl / wpa_supplicant / net-setup / setup-interfaces)." >&2; exit 1; }
 	os_live_tools
 	: >"$LOG"; rm -f "$ERRFILE" "$NOTEFILE" /tmp/usrsideos-no-usrkrnl
 }
@@ -838,7 +840,7 @@ requirements
 hopd_values
 # backends without a green VM test yet; remove an ID here once its test has passed
 case $OS in
-	gentoo)
+	gentoo|alpine)
 		log "NOTE: the $OS_NAME backend is experimental and untested"
 		if [[ -z $ANSWERS ]]; then
 			dlg --title "Experimental" --defaultno --yesno "The $OS_NAME backend is experimental and untested.\n\nThe installation may fail or leave an unbootable system. Only the Arch and Void backends have been tested so far.\n\nContinue anyway?" 12 70 || exit 0
