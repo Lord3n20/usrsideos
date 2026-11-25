@@ -141,7 +141,17 @@ os_sound() {
 	wp_no_audio
 }
 
+# Arch's makepkg.conf has "debug" in OPTIONS: every AUR build (yay-bin, ungoogled-chromium-bin …)
+# would also install a -debug package. hopd and usrkrnl are built with make, not makepkg.
+makepkg_no_debug() {
+	local f=$MNT/etc/makepkg.conf
+	[[ -f $f ]] || return 0
+	sed -i '/^OPTIONS=(/s/\([( ]\)debug\([ )]\)/\1!debug\2/' "$f"
+	grep -q '^OPTIONS=(.*!debug' "$f" || warn "makepkg.conf: could not switch off debug packages"
+}
+
 os_community() {
+	makepkg_no_debug
 	opt_on yay || return 0
 	log "yay + AUR packages"
 	as_user 'cd /tmp && rm -rf yay-bin && git clone -q https://aur.archlinux.org/yay-bin.git && cd yay-bin && makepkg -si --noconfirm' ||
