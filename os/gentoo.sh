@@ -71,6 +71,7 @@ os_bootstrap() {
 	fetch "$STAGE3_BASE/$name" "$tmp/stage3.tar.xz" || die "stage3 download failed"
 	fetch "$STAGE3_BASE/$name.sha256" "$tmp/stage3.sha256" || die "stage3 checksum download failed"
 	if command -v gpg >/dev/null && [[ -r /usr/share/openpgp-keys/gentoo-release.asc ]]; then
+		mkdir -m 700 "$tmp/gnupg"   # gpg does not create a missing --homedir
 		gpg -q --homedir "$tmp/gnupg" --import /usr/share/openpgp-keys/gentoo-release.asc 2>>"$LOG" &&
 			gpg -q --homedir "$tmp/gnupg" --verify "$tmp/stage3.sha256" 2>>"$LOG" || die "stage3 signature invalid"
 	fi
