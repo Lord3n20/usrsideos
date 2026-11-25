@@ -14,6 +14,9 @@
 # Works on any distribution (package hints for Arch, Void and Gentoo).
 # Run it as a normal user; sudo or doas is used only for the install steps.
 set -Eeuo pipefail
+# sbin directories: a login shell of a normal user on Alpine has no /sbin in PATH, but blkid,
+# modinfo, depmod … live there (Arch, Void and Gentoo have everything in /usr/bin)
+for d in /usr/local/sbin /usr/sbin /sbin; do [[ :$PATH: == *:$d:* ]] || PATH=$PATH:$d; done
 # set -e alone ends the script without a word; say where it stopped
 trap 'echo "usrkrnl/setup: unexpected error in line $LINENO: $BASH_COMMAND" >&2' ERR
 
