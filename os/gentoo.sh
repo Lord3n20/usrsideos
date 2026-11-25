@@ -105,7 +105,11 @@ EOF
 	[[ $FS != btrfs ]] || echo 'add_dracutmodules+=" btrfs "' >>"$MNT/etc/dracut.conf.d/usrside.conf"
 	in_target emerge-webrsync || die "emerge-webrsync failed"
 	in_target getuto || die "getuto (binary package keys) failed"
-	emerge_ app-eselect/eselect-repository dev-vcs/git || die "eselect-repository failed"
+	# the fs tools first: dracut's btrfs/xfs modules need them when the kernel is emerged
+	# (with --jobs the kernel can finish before them)
+	local fsp="FS_PKG_$FS"
+	# shellcheck disable=SC2086  # may name several packages
+	emerge_ app-eselect/eselect-repository dev-vcs/git ${!fsp:-} || die "eselect-repository/fs tools failed"
 	in_target eselect repository enable guru pf4public || die "overlays could not be enabled"
 	in_target emaint sync -r guru && in_target emaint sync -r pf4public || die "overlay sync failed"
 
