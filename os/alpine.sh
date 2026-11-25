@@ -40,7 +40,7 @@ UCODE_AMD=amd-ucode
 declare -A PKG=(
 	[desktop]="niri kitty xwayland-satellite xwayland xdg-desktop-portal-gnome wl-clipboard mesa-dri-gallium font-noto font-noto-cjk font-noto-emoji font-dejavu font-liberation"
 	[waybar]=waybar [rofi]=rofi-wayland [mako]=mako [lock]="swaylock swayidle" [polkit]="polkit-gnome polkit-elogind" [swaybg]=swaybg
-	[sound]="pulseaudio pulseaudio-alsa alsa-plugins-pulse pulsemixer sof-firmware" [sound_bt]=pulseaudio-bluez
+	[sound]="pulseaudio pulseaudio-utils pulseaudio-alsa alsa-plugins-pulse pulsemixer sof-firmware" [sound_bt]=pulseaudio-bluez
 	[bluetooth]=bluez [ssh]=openssh-client-default [wireguard]=wireguard-tools
 	[neovim]=neovim [btop]=btop [fastfetch]=fastfetch [bashcomp]=bash-completion [fzf]=fzf [tmux]=tmux
 	[less]=less [unzip]=unzip [wget]=wget
