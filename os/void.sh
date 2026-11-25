@@ -95,7 +95,10 @@ os_autologin() {
 	# GETTY_ARGS indented inside an if, so write our own instead of editing it
 	local d=$MNT/etc/sv/agetty-autologin-tty1
 	mkdir -p "$d"
-	ln -sfn ../agetty-generic/run "$d/run"
+	# wait for the elogind service: an earlier login would D-Bus-activate a second elogind, and
+	# the runit one then fails in a loop
+	printf '#!/bin/sh\nsv check elogind >/dev/null && [ -d /run/systemd/seats ] || exit 1\nexec /etc/sv/agetty-generic/run\n' >"$d/run"
+	chmod 755 "$d/run"
 	ln -sfn ../agetty-generic/finish "$d/finish"
 	ln -sfn /run/runit/supervise.agetty-autologin-tty1 "$d/supervise"
 	printf 'GETTY_ARGS="--autologin %s --noclear"\nBAUD_RATE=38400\nTERM_NAME=linux\n' "$USERNAME" >"$d/conf"
