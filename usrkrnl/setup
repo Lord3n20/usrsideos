@@ -424,6 +424,25 @@ $SUDO mv "$ESP/EFI/usrkrnl/vmlinuz-usr.efi.new" "$ESP/EFI/usrkrnl/vmlinuz-usr.ef
 sync
 msg "Kernel image: $ESP/EFI/usrkrnl/vmlinuz-usr.efi"
 
+# removable-media path \EFI\BOOT\BOOTX64.EFI: the firmware starts it when the NVRAM boot entries
+# are gone (BIOS reset, board swap); usrkrnl needs no arguments (command line built in).
+# Only a file we wrote ourselves is replaced: its checksum is kept in EFI/usrkrnl/bootx64.sha256.
+fb=$ESP/EFI/BOOT/BOOTX64.EFI mark=$ESP/EFI/usrkrnl/bootx64.sha256
+# test as root: the ESP is often mounted with dmask=0077, a user would see an empty directory
+own=0
+if ! $SUDO test -e "$fb"; then own=1
+elif $SUDO test -f "$mark" && [[ $($SUDO sha256sum "$fb" | awk '{ print $1 }') == "$($SUDO cat "$mark")" ]]; then own=1
+fi
+if ((own)); then
+	$SUDO install -Dm644 "$TREE/arch/x86/boot/bzImage" "$fb.new"
+	$SUDO mv "$fb.new" "$fb"
+	$SUDO sha256sum "$fb" | awk '{ print $1 }' | $SUDO tee "$mark" >/dev/null
+	sync
+	msg "Fallback copy: $fb (boots usrkrnl even without UEFI boot entries)"
+else
+	warn "$fb belongs to another system or bootloader, left alone (no fallback copy of usrkrnl)"
+fi
+
 command -v efibootmgr >/dev/null || die "efibootmgr missing, cannot create a boot entry"
 # number of the usrkrnl entry, empty if there is none. One awk without grep: with pipefail a
 # grep that finds nothing (first installation) would end the script silently through set -e

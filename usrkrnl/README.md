@@ -41,6 +41,11 @@ your root disk into the kernel, embeds the CPU microcode and your current kernel
 command line, builds, installs modules (+ DKMS) and copies the image to
 `ESP/EFI/usrkrnl/vmlinuz-usr.efi`.
 
+It also copies the image to `ESP/EFI/BOOT/BOOTX64.EFI`, the path the firmware
+starts when its boot entries are gone (BIOS reset), but only if nothing else is
+there or the file is an earlier copy of its own (checksum in
+`ESP/EFI/usrkrnl/bootx64.sha256`).
+
 A UEFI boot entry is created but **not** added to the boot order.
 `--bootnext` boots it once; if that fails, the next reboot uses your old kernel.
 When it works, make it the default (UsrsideOS does this with `usrkrnl-confirm`):

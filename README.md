@@ -153,6 +153,12 @@ usrkrnl has no initramfs, so it builds the root filesystem into the kernel (`CON
   `/etc/apk/world`. Boot it once with `sudo efibootmgr -n XXXX` (XXXX = the fallback entry).
   If neither kernel boots any more: the live USB stick. Without usrkrnl (or if its build failed)
   the distribution kernel is updated as usual.
+- After a BIOS reset (UEFI boot entries lost) the firmware starts `\EFI\BOOT\BOOTX64.EFI`:
+  usrkrnl/setup puts a copy of usrkrnl there (it needs no arguments, the command line is built in),
+  unless another system or bootloader already uses that path. The distribution kernel needs its
+  entry (initramfs + command line). Without usrkrnl, recreate it from the live USB stick:
+  `efibootmgr -c -d /dev/DISK -p 1 -L "UsrsideOS" -l '\vmlinuz-NAME' -u "root=PARTUUID=… rw initrd=\initramfs-NAME.img"`
+  (the old command line: `cat /proc/cmdline` on the running system).
 - New hardware later? Plug the device in, use it, then run `~/usrsideos/usrkrnl/setup`.
 - Kernel update: `git -C ~/usrsideos pull && ~/usrsideos/usrkrnl/setup`.
 
