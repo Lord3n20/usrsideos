@@ -20,7 +20,6 @@ BASE=(sys-kernel/gentoo-kernel-bin sys-kernel/linux-firmware sys-kernel/installk
 	sys-fs/dosfstools app-admin/sudo net-wireless/iwd net-misc/dhcpcd net-dns/openresolv
 	sys-auth/elogind sys-apps/dbus net-misc/chrony dev-vcs/git sys-boot/efibootmgr)
 BROWSER_NAME=ungoogled-chromium
-LOCK_CMD=hyprlock
 POLKIT_SPAWN='"/usr/libexec/polkit-gnome-authentication-agent-1"'   # hyprpolkitagent needs systemd --user
 BUILD_PKGS=()                         # gcc + make are part of the stage3
 KERNEL_PKGS=(llvm-core/clang llvm-core/lld sys-devel/bc dev-util/pahole app-arch/cpio net-misc/curl app-arch/zstd)   # usrkrnl only
@@ -33,7 +32,7 @@ UCODE_AMD=""                  # AMD microcode is part of linux-firmware
 # (Steam needs the steam-overlay), TUXEDO drivers, the PulseAudio Bluetooth module (USE flag)
 declare -A PKG=(
 	[desktop]="gui-wm/niri x11-terms/kitty gui-apps/xwayland-satellite sys-apps/xdg-desktop-portal-gnome gui-apps/wl-clipboard media-fonts/noto media-fonts/noto-cjk media-fonts/noto-emoji media-fonts/dejavu media-fonts/liberation-fonts"
-	[waybar]=gui-apps/waybar [rofi]=x11-misc/rofi [mako]=gui-apps/mako [lock]="gui-apps/hyprlock gui-apps/swayidle"
+	[waybar]=gui-apps/waybar [rofi]=x11-misc/rofi [mako]=gui-apps/mako [lock]="gui-apps/swaylock gui-apps/swayidle"
 	[polkit]=gnome-extra/polkit-gnome [swaybg]=gui-apps/swaybg
 	[sound]="media-sound/pulseaudio-daemon media-libs/libpulse media-sound/pulsemixer sys-firmware/sof-firmware"
 	[bluetooth]=net-wireless/bluez [ssh]=net-misc/openssh [wireguard]=net-vpn/wireguard-tools

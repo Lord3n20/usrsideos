@@ -20,7 +20,7 @@
 #
 # Backend contract (os/*.sh): OS_NAME OS_KERNEL_NAME FREE_HINT COMMUNITY SESSION_CMD IWD_DNS SSH_PKG
 # BASE (always) BUILD_PKGS (compiler/make: hopd, usrkrnl, yay) KERNEL_PKGS (usrkrnl) PKG[option]
-# AUR[option] (Arch) BROWSER_NAME LOCK_CMD POLKIT_SPAWN UCODE_INTEL UCODE_AMD FS_PKG_btrfs FS_PKG_xfs
+# AUR[option] (Arch) BROWSER_NAME POLKIT_SPAWN UCODE_INTEL UCODE_AMD FS_PKG_btrfs FS_PKG_xfs
 # (tools of the chosen root fs), functions os_live_tools os_chroot os_bootstrap os_locale os_enable
 # os_services os_extra_services os_autologin os_sound os_community os_kernel_hook os_hopd_service
 # os_confirm_service os_finish. An option without packages in PKG/AUR is not offered on that backend. Helpers for backends: log, die (aborts), warn (goes on; shown in
@@ -373,7 +373,7 @@ m_autologin() {
 		dlg --yesno "Autologin starts niri, but the niri desktop is not selected.\n\nSwitch the niri desktop on?" 9 64 || { AUTOLOGIN=0 EXPL[autologin]=1; return 0; }
 		SEL[desktop]=1 EXPL[desktop]=1
 	fi
-	if dlg --yesno "Log in automatically on tty1 and start niri?\n\n(The UsrsideOS way: power on → desktop. Locking is done by hyprlock/swaylock if installed.)" 10 64
+	if dlg --yesno "Log in automatically on tty1 and start niri?\n\n(The UsrsideOS way: power on → desktop. Locking is done by swaylock if installed.)" 10 64
 	then AUTOLOGIN=1; else AUTOLOGIN=0; fi
 	EXPL[autologin]=1
 }
@@ -680,9 +680,9 @@ EOF
 
 # UsrsideOS changes to niri's default config, depending on the selected options
 niri_config() {
-	local c=$1 l
+	local c=$1 l='"swaylock" "-f" "-c" "1e2030"'   # same lock screen on every backend (swaybg colour)
 	[[ -x $MNT/usr/bin/waybar ]] || sed -i 's/^spawn-at-startup "waybar"/\/\/ spawn-at-startup "waybar"/' "$c"
-	if ((H_NIRI)); then   # hopd starts waybar (and locks with hyprlock when the lid closes)
+	if ((H_NIRI)); then   # hopd starts waybar (and locks with swaylock when the lid closes)
 		sed -i 's/^\/\/ *spawn-at-startup "waybar"/spawn-at-startup "waybar"/; s/^spawn-at-startup "waybar"/spawn-at-startup "hopd" "sitzung"/' "$c"
 	fi
 	if opt_on rofi; then   # launcher on Mod+Space instead of fuzzel on Mod+D
@@ -690,13 +690,13 @@ niri_config() {
 		sed -i 's/^\( *\)\(Mod+Space *{ switch-layout\)/\1\/\/ \2/' "$c"
 	fi
 	if opt_on lock; then   # Mod+L locks (focus right stays on Mod+Right)
-		l=$LOCK_CMD
-		sed -i "s/^\\( *\\)Super+Alt+L hotkey-overlay-title=\"[^\"]*\" { spawn \"swaylock\"; }/\\1Mod+L hotkey-overlay-title=\"Lock the Screen: $l\" { spawn \"$l\"; }/" "$c"
+		sed -i "s/^\\( *\\)Super+Alt+L hotkey-overlay-title=\"[^\"]*\" { spawn \"swaylock\"; }/\\1Mod+L hotkey-overlay-title=\"Lock the Screen: swaylock\" { spawn $l; }/" "$c"
 		# focus right moves to Mod+D (and stays on Mod+Right), Mod+A is focus left (as on the UsrsideOS laptop)
 		sed -i '/^ *Mod+D hotkey-overlay-title="[^"]*" { spawn "fuzzel"; }/d' "$c"
 		sed -i 's/^\( *\)\(Mod+L *{ focus-column-right; }\)/\1\/\/ \2\n\1Mod+A     { focus-column-left; }\n\1Mod+D     { focus-column-right; }/' "$c"
-		# idle lock; with the hopd niri part hopd also locks when the lid closes (hyprlock)
-		printf 'spawn-at-startup "swayidle" "timeout" "600" "pidof %s || %s" "before-sleep" "pidof %s || %s &"\n' "$l" "$l" "$l" "$l" >>"$c"
+		# idle lock; -f returns once the screen is locked, so before-sleep waits for it.
+		# With the hopd niri part hopd also locks when the lid closes.
+		echo 'spawn-at-startup "swayidle" "timeout" "600" "pidof swaylock || swaylock -f -c 1e2030" "before-sleep" "pidof swaylock || swaylock -f -c 1e2030"' >>"$c"
 	fi
 	opt_on polkit && echo "spawn-at-startup $POLKIT_SPAWN" >>"$c"
 	opt_on swaybg && echo 'spawn-at-startup "swaybg" "-c" "#1e2030"' >>"$c"
@@ -722,8 +722,6 @@ build_hopd() {
 	sed -i "s/^\(static const int   strom_nur_e\[3\] *= \){[^}]*}/\1{ 0, $H_ECORES, 0 }/" "$c"
 	sed -i "s/^\(static const char \*strom_modus\[3\] *= \){[^}]*}/\1{ \"$H_MODE_AC\", \"$H_MODE_BAT\", \"$H_MODE_BAT\" }/" "$c"
 	sed -i "s/^\(static const char  strom_panel\[\] *= \)\"[^\"]*\"/\1\"$H_PANEL\"/; s/^\(static const char niri_panel\[\] = \)\"[^\"]*\"/\1\"$H_PANEL\"/" "$c"
-	# lid lock of the niri part: the chosen lock screen (Void has no hyprlock)
-	opt_on lock && sed -i "s/^\(static const char niri_sperre\[\] = \)\"[^\"]*\"/\1\"$LOCK_CMD\"/" "$c"
 	in_target make -s -C /usr/local/src/hopd || die "hopd could not be built"
 	in_target make -s -C /usr/local/src/hopd install PREFIX=/usr/local
 	os_hopd_service

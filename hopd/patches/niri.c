@@ -143,7 +143,7 @@ static int sitzung(int argc, char **argv)
 static int schein_aus(int argc, char **argv)
 {
 	if (!n_laeuft(niri_sperre)) {
-		if (!strcmp(niri_sperre, "hyprlock")) n_los((char *const[]){ (char *)niri_sperre, "--no-fade-in", NULL }, NULL);
+		if (!strcmp(niri_sperre, "swaylock")) n_los((char *const[]){ (char *)niri_sperre, "-c", "1e2030", NULL }, NULL);
 		else n_los((char *const[]){ (char *)niri_sperre, NULL }, NULL);
 	}
 	schlaf(0.7);

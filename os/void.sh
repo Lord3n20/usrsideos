@@ -15,7 +15,6 @@ VOID_REPO=https://repo-default.voidlinux.org/current
 BASE=(base-system linux linux-firmware dracut void-repo-nonfree dosfstools sudo
 	iwd openresolv dbus elogind chrony git efibootmgr)
 BROWSER_NAME=chromium
-LOCK_CMD=swaylock                     # hyprlock is not packaged for Void
 POLKIT_SPAWN='"/usr/libexec/polkit-gnome-authentication-agent-1"'   # hyprpolkitagent: not packaged
 BUILD_PKGS=(base-devel)               # compiler + make: hopd, usrkrnl
 KERNEL_PKGS=(dkms clang lld llvm bc flex bison pahole cpio perl openssl-devel elfutils-devel zstd curl patch xz)   # usrkrnl only

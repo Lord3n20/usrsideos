@@ -69,8 +69,8 @@ module needs sound and Bluetooth, AUR packages need yay). Answers-file key = the
 | `waybar` | top bar | ✓ | ✓ | ✓ | ✓ |
 | `rofi` | app launcher on Mod+Space (replaces fuzzel on Mod+D) | ✓ | ✓ | ✓ | ✓ |
 | `mako` | notifications | ✓ | ✓ | ✓ | ✓ |
-| `lock` | lock screen on Mod+L + idle lock after 10 min, see [niri keys](#niri-keys) | ✓ | hyprlock + swayidle | swaylock + swayidle¹ | hyprlock + swayidle |
-| `polkit` | polkit agent | ✓ | hyprpolkitagent | polkit-gnome¹ | polkit-gnome |
+| `lock` | lock screen on Mod+L + idle lock after 10 min, see [niri keys](#niri-keys) | ✓ | swaylock + swayidle | swaylock + swayidle | swaylock + swayidle |
+| `polkit` | polkit agent | ✓ | hyprpolkitagent | polkit-gnome¹ | polkit-gnome¹ |
 | `swaybg` | plain wallpaper colour | ✓ | ✓ | ✓ | ✓ |
 | `sound` | PulseAudio + pulsemixer (+ sof-firmware) | ✓ | ✓ | ✓ | ✓ |
 | `bluetooth` | bluez, service enabled | ✓ | ✓ | ✓ | ✓ |
@@ -87,7 +87,7 @@ module needs sound and Bluetooth, AUR packages need yay). Answers-file key = the
 | `fish` `office` `latex` | fish shell, LibreOffice, TeX Live base | | ✓ | ✓ | ✓ |
 | `games` | Steam + MangoHud (enables multilib) | | ✓ | –³ | –³ |
 
-¹ hyprlock and hyprpolkitagent are not packaged for Void; the hopd niri part locks with swaylock there too.
+¹ hyprpolkitagent is not packaged for Void and needs systemd --user (Gentoo uses OpenRC).
 ² part of PulseAudio itself (Void) or its `bluetooth` USE flag (Gentoo).
 ³ Steam needs the multilib repositories (Void) or the steam-overlay (Gentoo); set them up yourself.
 ⁴ the Gentoo package atoms are checked in the Gentoo test phase.
@@ -102,7 +102,7 @@ UsrsideOS changes a few keys of niri's default config:
 | Mod+D | app launcher (fuzzel) | focus column right, with `lock` |
 | Mod+A | – | focus column left, with `lock` |
 | Mod+L | focus column right | lock screen, with `lock` (Mod+Right still moves right) |
-| Super+Alt+L | swaylock | moved to Mod+L |
+| Super+Alt+L | swaylock | moved to Mod+L (`swaylock -f -c 1e2030`, also for the idle lock) |
 
 Sound is PulseAudio. PipeWire may still come in as a dependency of the portal (screen sharing), but
 WirePlumber is configured not to touch the sound cards and nothing provides the pulse socket.

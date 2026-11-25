@@ -13,7 +13,6 @@ IWD_DNS=systemd
 # always: a bootable system with network; the rest only when chosen (see install: packages)
 BASE=(base linux linux-firmware dosfstools sudo iwd git efibootmgr)
 BROWSER_NAME=ungoogled-chromium
-LOCK_CMD=hyprlock
 POLKIT_SPAWN='"systemctl" "--user" "start" "hyprpolkitagent"'
 BUILD_PKGS=(base-devel)               # compiler + make: hopd, usrkrnl, yay
 KERNEL_PKGS=(dkms clang lld llvm bc pahole cpio perl openssl zstd curl)   # usrkrnl only
@@ -25,7 +24,7 @@ UCODE_AMD=amd-ucode
 # packages per option (see OPTIONS in install); AUR = built with yay
 declare -A PKG=(
 	[desktop]="niri kitty xwayland-satellite xdg-desktop-portal-gnome wl-clipboard noto-fonts noto-fonts-cjk noto-fonts-emoji ttf-dejavu ttf-liberation"
-	[waybar]=waybar [rofi]=rofi [mako]=mako [lock]="hyprlock swayidle" [polkit]=hyprpolkitagent [swaybg]=swaybg
+	[waybar]=waybar [rofi]=rofi [mako]=mako [lock]="swaylock swayidle" [polkit]=hyprpolkitagent [swaybg]=swaybg
 	[sound]="pulseaudio pulseaudio-alsa pulsemixer sof-firmware" [sound_bt]=pulseaudio-bluetooth
 	[bluetooth]="bluez bluez-utils" [ssh]=openssh [wireguard]=wireguard-tools
 	[neovim]=neovim [btop]=btop [fastfetch]=fastfetch [bashcomp]=bash-completion [fzf]=fzf [tmux]=tmux
