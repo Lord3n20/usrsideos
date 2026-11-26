@@ -135,10 +135,13 @@ os_live_tools() {
 	if [[ ! -s /etc/pacman.d/gnupg/pubring.gpg && ! -s /etc/pacman.d/gnupg/pubring.kbx ]]; then
 		pacman-key --init >/dev/null 2>&1; pacman-key --populate archlinux >/dev/null 2>&1
 	fi
-	if ((${#need[@]})); then
-		pacman -Sy --noconfirm --needed "${need[@]}" >/dev/null 2>&1 ||
-			{ echo "Could not install ${need[*]} into the live system (network? pacman -Sy ${need[*]})" >&2; exit 1; }
-	fi
+	local i out
+	for ((i = 1; ${#need[@]} && i <= 3; i++)); do   # right after booting the network may still come up
+		# rcyay, not pacman: it overwrites the BusyBox links in free paths (mkfs.vfat …)
+		out=$(rcyay -Sy --repo --noconfirm --needed "${need[@]}" 2>&1) && break
+		((i == 3)) && { echo "$out" | tail -n 5 >&2; echo "Could not install ${need[*]} into the live system (network? pacman -Sy ${need[*]})" >&2; exit 1; }
+		sleep 5
+	done
 	[[ -d $USRSIDE_REPO ]] || { echo "The live system has no repository $USRSIDE_REPO" >&2; exit 1; }
 	mountpoint -q /sys/firmware/efi/efivars || mount -t efivarfs efivarfs /sys/firmware/efi/efivars 2>/dev/null || true
 }
