@@ -172,10 +172,11 @@ wireplumber.profiles = {
 EOF
 }
 
-# no systemd user units: PulseAudio is started with the niri session; without niri, clients start
+# no systemd user units: PulseAudio is started with the niri session (and kept running: the default
+# exit-idle-time of 20 s would end it again before the first client); without niri, clients start
 # it themselves (autospawn, the default in client.conf)
 os_sound() {
-	[[ -z $1 ]] || echo 'spawn-at-startup "pulseaudio" "--start"' >>"$1"
+	[[ -z $1 ]] || echo 'spawn-at-startup "pulseaudio" "--start" "--exit-idle-time=-1"' >>"$1"
 	wp_no_audio
 }
 
