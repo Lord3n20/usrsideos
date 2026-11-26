@@ -68,7 +68,8 @@ device, run `usrkrnl/setup --reminimize` again.
 
 Some drivers are always kept, even if nothing used them while `setup` ran
 (`usrkrnl/keep-modules`): graphics (DRM, simpledrm, i915, xe, amdgpu, nouveau,
-virtio-gpu, bochs, qxl, vmwgfx), Bluetooth, USB/I2C input, sound (HDA, SOF, USB,
+virtio-gpu, bochs, qxl, vmwgfx), Bluetooth, WLAN (cfg80211 for iwd, common Intel,
+MediaTek, Realtek, Qualcomm chips), USB/I2C input, sound (HDA, SOF, USB,
 virtio) and Thunderbolt/USB4. They can only be kept if the base config has them,
 so `--base` should be a distribution kernel config, not a stripped one.
 

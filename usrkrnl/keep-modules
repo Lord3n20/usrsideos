@@ -60,6 +60,23 @@ snd_sof_amd_acp70
 snd_usb_audio
 virtio_snd
 
+# WLAN: iwd quits without nl80211 (cfg80211), and a live system on cable (or a VM) has no
+# WLAN driver loaded; common Intel, MediaTek, Realtek and Qualcomm chips, also as USB sticks
+cfg80211
+mac80211
+iwlwifi
+iwlmvm
+iwlmld
+mt7921e
+mt7921u
+mt7925e
+rtw89_8852be
+rtw89_8852ce
+rtw88_8822ce
+rtw88_8821cu
+ath11k_pci
+ath12k
+
 # Thunderbolt/USB4 (eGPU, docks), USB-C
 thunderbolt
 typec_ucsi
