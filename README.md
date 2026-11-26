@@ -183,6 +183,27 @@ Installed to `/usr/local/src/hopd`. Its commands and config names are German.
 Commands: `hopd befehle`; to change settings, edit `/usr/local/src/hopd/config.h`, then
 `sudo make -C /usr/local/src/hopd install && sudo systemctl restart hopd`.
 
+## Pure UsrsideOS (experimental)
+
+Booted from the UsrsideOS live system (for now a glibc image of the rcyay bootstrap, later the live ISO),
+`install` uses the backend `os/usrside.sh`: no Arch ISO, everything comes from the live system (rcyay, pacman,
+the repository `[usrside]` in `/srv/usrside`, the running kernel). Packages are Arch binary packages
+(core/extra/multilib) plus `[usrside]`, installed with `rcyay --root` instead of pacstrap; the keyring of the new
+system is initialised by the installer. No Flatpak/Snap.
+
+| Key (menu "Init/libc") | Values | Default |
+|---|---|---|
+| `INIT` | `runit`, `s6`, `busybox`, `systemd` (services of all four are installed, `init=` in the boot entries, `Init =` in `/etc/rcyay.conf`; switch later with `rcyay --init NAME`) | `runit` |
+| `PROFIL` | `standard` (GNU tools stay), `minimal` (BusyBox instead of coreutils/findutils/grep/sed/gawk/diffutils) | `standard` |
+| `LIBC` | `glibc`; `musl` once the musl variant exists | `glibc` |
+
+- Without systemd: seatd (niri with `LIBSEAT_BACKEND=seatd`, the user is in the group `seat`), an own D-Bus
+  system bus service, `XDG_RUNTIME_DIR` from `/etc/usrside/start.d`, the polkit agent is polkit-gnome, PulseAudio
+  starts with niri; other services are translated from their systemd units by rcyay.
+- Fallback boot entry "UsrsideOS (live kernel)": the kernel of the live system without initramfs.
+  NVIDIA and TUXEDO drivers switch usrkrnl on (their DKMS modules are built against usrkrnl).
+- AUR packages (`aur:`, browser, TUXEDO) are built with rcyay.
+
 ## Limits
 
 - x86_64 with UEFI only. Void: glibc only. Gentoo: OpenRC only. Alpine: Wi-Fi of the live ISO (wpa_supplicant) is not taken over, use `iwctl` after the reboot. No disk encryption (usrkrnl boots without initramfs).
