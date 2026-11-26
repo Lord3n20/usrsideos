@@ -377,7 +377,10 @@ args=()
 if ((CMDLINE_SET)); then src_args=$CMDLINE_ARGS; else src_args=$(</proc/cmdline); fi
 for a in $src_args; do
 	case $a in
-		BOOT_IMAGE=*|initrd=*|root=*|rootfstype=*|rootwait|rw|ro|rd.*|cryptdevice=*|init=*) ;;
+		BOOT_IMAGE=*|initrd=*|root=*|rootfstype=*|rootwait|rw|ro|rd.*|cryptdevice=*) ;;
+		# init= of the running live system is dropped; given with --cmdline it is the init of the new
+		# system (pure UsrsideOS: runit, s6, BusyBox init or systemd)
+		init=*) ((CMDLINE_SET)) && args+=("$a") ;;
 		*) [[ " ${args[*]} " == *" $a "* ]] || args+=("$a") ;;
 	esac
 done
