@@ -190,7 +190,8 @@ os_bootstrap() {
 	log "rcyay --root: ${REPO[*]} (init $INIT, userland $PROFIL)"
 	rm -rf "$w"; mkdir -p "$w"
 	usrside_pacman_conf "file://$USRSIDE_REPO" >"$w/pacman.conf"
-	mkdir -p "$MNT"/{etc,var/lib/pacman,var/cache/pacman/pkg,srv,tmp}
+	# usr/lib/modules: the DKMS hook of the packages (nvidia-open-dkms …) aborts without it
+	mkdir -p "$MNT"/{etc,var/lib/pacman,var/cache/pacman/pkg,srv,tmp,usr/lib/modules}
 	chmod 1777 "$MNT/tmp"
 	# /dev /proc /sys /run for the package hooks (sysusers, tmpfiles, rcyay-dienste); resolv.conf belongs
 	# to the filesystem package, the copy of the live system only comes afterwards
@@ -356,9 +357,24 @@ os_sound() {
 	wp_no_audio
 }
 
+# DKMS sources (nvidia-open-dkms, tuxedo-drivers-dkms) are only added by the package hook when a kernel is
+# installed; there is none yet, so add them here: usrkrnl/setup then builds them (dkms autoinstall -k)
+usrside_dkms_add() {
+	local d m
+	[[ -x $MNT/usr/bin/dkms ]] || return 0
+	for d in "$MNT"/usr/src/*/dkms.conf; do
+		[[ -f $d ]] || continue
+		m=${d%/dkms.conf}; m=${m##*/}
+		os_chroot dkms status "${m%-*}/${m##*-}" 2>/dev/null | grep -q . && continue
+		in_target dkms add "/usr/src/$m" || warn "dkms add $m failed (see the log)"
+	done
+	return 0
+}
+
 os_community() {
 	local f=$MNT/etc/makepkg.conf
 	[[ -f $f ]] && sed -i '/^OPTIONS=(/s/\([( ]\)debug\([ )]\)/\1!debug\2/' "$f"
+	usrside_dkms_add
 	opt_on yay || return 0
 	local aur=() k
 	for k in "${!AUR[@]}"; do
@@ -369,6 +385,7 @@ os_community() {
 	((${#aur[@]})) || return 0
 	log "AUR packages with rcyay: ${aur[*]}"
 	as_user "rcyay -S --aur --noconfirm --needed --nodiff ${aur[*]}" || die "AUR packages failed (${aur[*]})"
+	usrside_dkms_add
 }
 
 # fallback: the kernel of the live system (usrkrnl without initramfs, root fs built in) + its modules;
