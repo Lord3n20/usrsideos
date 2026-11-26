@@ -326,6 +326,8 @@ os_autologin() {
 
 os_extra_services() {
 	opt_on bluetooth && os_enable bluetooth
+	# boltd is started by D-Bus activation; without systemd nobody creates its StateDirectory=
+	if opt_on bolt && [[ $INIT != systemd ]]; then install -dm755 "$MNT/var/lib/boltd"; fi
 	if opt_on printing; then if [[ $INIT == systemd ]]; then os_enable cups.socket; else os_enable cups; fi; fi
 	if opt_on pkgtools; then
 		if [[ $INIT == systemd ]]; then os_enable paccache.timer; else log "pkgtools: no timers without systemd, run paccache -r yourself"; fi
