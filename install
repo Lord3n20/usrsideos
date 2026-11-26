@@ -25,7 +25,10 @@
 # AUR[option] (Arch) BROWSER_NAME POLKIT_SPAWN UCODE_INTEL UCODE_AMD FS_PKG_btrfs FS_PKG_xfs
 # (tools of the chosen root fs), functions os_live_tools os_chroot os_bootstrap os_locale os_enable
 # os_services os_extra_services os_autologin os_sound os_community os_kernel_hook os_hopd_service
-# os_confirm_service os_freeze_kernel os_finish. An option without packages in PKG/AUR is not offered on that backend. Helpers for backends: log, die (aborts), warn (goes on; shown in
+# os_confirm_service os_freeze_kernel os_finish. Optional: OS_LIKE (ID_LIKE of the new system, default the
+# backend id), OS_AUR=1 (aur: packages possible), OS_INITRAMFS=0 (fallback kernel without initramfs), functions
+# os_answers (check backend keys of the answers file), os_menu_label/os_menu (one more menu entry), os_prepare
+# (runs once before the installation, after answers/menu). An option without packages in PKG/AUR is not offered on that backend. Helpers for backends: log, die (aborts), warn (goes on; shown in
 # the final dialog, for optional parts such as sound).
 set -euo pipefail
 # nothing from the live environment: exported functions (BASH_FUNC_*) and startup files of
@@ -41,9 +44,15 @@ if [[ ${1:-} == --answers ]]; then ANSWERS=$(readlink -f "${2:?--answers needs a
 
 LIVE_ID=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
 case $LIVE_ID in
-	arch|void|gentoo|alpine) OS=$LIVE_ID ;;
-	*) echo "Unsupported live system '${LIVE_ID:-unknown}'. Boot the Arch, Void, Gentoo or Alpine ISO." >&2; exit 1 ;;
+	# pure UsrsideOS (own live system, os/usrside.sh); the glibc images of the rcyay bootstrap still say
+	# ID=arch (Arch filesystem package), they are recognised by the init list and rcyay
+	usrside) OS=usrside ;;
+	arch) if [[ -s /usr/share/usrside/inits ]] && command -v rcyay >/dev/null; then OS=usrside; else OS=arch; fi ;;
+	void|gentoo|alpine) OS=$LIVE_ID ;;
+	*) echo "Unsupported live system '${LIVE_ID:-unknown}'. Boot the UsrsideOS, Arch, Void, Gentoo or Alpine ISO." >&2; exit 1 ;;
 esac
+OS_LIKE="" OS_AUR=0 OS_INITRAMFS=1
+[[ $OS != arch ]] || OS_AUR=1
 # shellcheck source=os/arch.sh
 . "$HERE/os/$OS.sh"
 TITLE="UsrsideOS installer ($OS_NAME)"
@@ -453,7 +462,7 @@ m_packages() {
 	EXTRA_REPO=() EXTRA_AUR=()
 	for p in $free; do
 		if [[ $p == aur:* ]]; then
-			if [[ $OS == arch ]]; then EXTRA_AUR+=("${p#aur:}"); else dlg --msgbox "AUR packages only work on Arch: $p skipped." 6 60; fi
+			if ((OS_AUR)); then EXTRA_AUR+=("${p#aur:}"); else dlg --msgbox "AUR packages only work on Arch and UsrsideOS: $p skipped." 6 60; fi
 		else EXTRA_REPO+=("$p"); fi
 	done
 	resolve_options
@@ -495,11 +504,12 @@ m_hopd() {
 
 on_off() { (($1)) && echo on || echo off; }
 main_menu() {
-	local choice hparts n k
+	local choice hparts n k extra
 	while true; do
 		hparts=""
 		for t in STROM AKKULOG LUEFTER EGPU NIRI; do v=H_$t; ((${!v})) && hparts+="${t,,} "; done
 		n=0; for k in "${!SEL[@]}"; do ((SEL[$k])) && n=$((n + 1)); done
+		extra=(); if declare -F os_menu >/dev/null; then extra=(O "$(os_menu_label)"); fi
 		choice=$(dlg --title "$TITLE" --cancel-label "Cancel" --menu "Base system: $OS_NAME. Set the options, then Install." 24 76 13 \
 			P "Profile:          $PROFILE" \
 			1 "Disk:             ${DISK:-(choose)}" \
@@ -512,11 +522,12 @@ main_menu() {
 			7 "hopd:             ${hparts:-off}" \
 			8 "Packages:         $n selected$(opt_on desktop && echo ", niri desktop")" \
 			9 "Build usrkrnl:    $(on_off "$USRKRNL")" \
+			"${extra[@]}" \
 			I "Install" \
 			Q "Cancel") || exit 0
 		case $choice in
 			P) m_profile ;; 1) m_disk ;; F) m_fs ;; 2) m_keyboard ;; 3) m_timezone ;; 4) m_hostname ;; 5) m_user ;;
-			6) m_autologin ;; 7) m_hopd ;; 8) m_extras ;; 9) m_kernel ;;
+			6) m_autologin ;; 7) m_hopd ;; 8) m_extras ;; 9) m_kernel ;; O) os_menu ;;
 			I) ready && return 0 ;;
 			Q) exit 0 ;;
 		esac
@@ -619,7 +630,7 @@ base_system() {
 		printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s\n' "$HOSTNAME_" >>"$MNT/etc/hosts"
 	local groups g
 	# pipefail: the loop must not end with the status of a missing last group
-	groups=$(for g in wheel video input audio; do if os_chroot getent group "$g" >/dev/null; then echo "$g"; fi; done | paste -sd,)
+	groups=$(for g in wheel video input audio seat; do if os_chroot getent group "$g" >/dev/null; then echo "$g"; fi; done | paste -sd,)
 	in_target useradd -m -G "$groups" -s /bin/bash "$USERNAME" || die "user could not be created"
 	printf '%s:%s\n' "$USERNAME" "$PASSWORD" | os_chroot chpasswd
 	in_target passwd -l root   # root locked without password, sudo via wheel
@@ -652,7 +663,7 @@ base_system() {
 	install -Dm644 "$HERE/files/logo.txt" "$MNT/usr/share/usrsideos/logo.txt"
 	install -Dm644 "$HERE/files/logo-small.txt" "$MNT/usr/share/usrsideos/logo-small.txt"
 	rm -f "$MNT/etc/os-release"
-	sed "s/^ID_LIKE=.*/ID_LIKE=$OS/" "$HERE/files/os-release" >"$MNT/etc/os-release"
+	sed "s/^ID_LIKE=.*/ID_LIKE=${OS_LIKE:-$OS}/" "$HERE/files/os-release" >"$MNT/etc/os-release"
 
 	# keep a copy of this repo (usrkrnl/setup, hopd) for later rebuilds and updates (git pull)
 	mkdir -p "$MNT/home/$USERNAME/usrsideos"
@@ -779,10 +790,16 @@ kernel() {
 	disk=/dev/$(lsblk -no PKNAME "$ESP"); part=$(<"/sys/class/block/$(basename "$ESP")/partition")
 	# fallback: distribution kernel with initramfs under a fixed name, directly via EFI stub
 	os_kernel_hook
-	[[ -f $MNT/boot/vmlinuz-$OS_KERNEL_NAME && -f $MNT/boot/initramfs-$OS_KERNEL_NAME.img ]] ||
-		die "fallback kernel missing: /boot/vmlinuz-$OS_KERNEL_NAME + initramfs-$OS_KERNEL_NAME.img"
+	local initrd=" initrd=\\initramfs-$OS_KERNEL_NAME.img"
+	if ((OS_INITRAMFS)); then
+		[[ -f $MNT/boot/vmlinuz-$OS_KERNEL_NAME && -f $MNT/boot/initramfs-$OS_KERNEL_NAME.img ]] ||
+			die "fallback kernel missing: /boot/vmlinuz-$OS_KERNEL_NAME + initramfs-$OS_KERNEL_NAME.img"
+	else
+		initrd=""   # the backend's fallback kernel boots without initramfs (root fs built in)
+		[[ -f $MNT/boot/vmlinuz-$OS_KERNEL_NAME ]] || die "fallback kernel missing: /boot/vmlinuz-$OS_KERNEL_NAME"
+	fi
 	efibootmgr -q -c -d "$disk" -p "$part" -L "$label" -l "\\vmlinuz-$OS_KERNEL_NAME" \
-		-u "$ROOT_CMDLINE initrd=\\initramfs-$OS_KERNEL_NAME.img" >>"$LOG" 2>&1 ||
+		-u "$ROOT_CMDLINE$initrd" >>"$LOG" 2>&1 ||
 		die "UEFI entry could not be created"
 	boot_first "$label" || die "UEFI entry not found after creating it"
 	((USRKRNL)) || return 0
@@ -865,10 +882,10 @@ requirements
 hopd_values
 # backends without a green VM test yet; remove an ID here once its test has passed
 case $OS in
-	gentoo|alpine)
+	gentoo|alpine|usrside)
 		log "NOTE: the $OS_NAME backend is experimental and untested"
 		if [[ -z $ANSWERS ]]; then
-			dlg --title "Experimental" --defaultno --yesno "The $OS_NAME backend is experimental and untested.\n\nThe installation may fail or leave an unbootable system. Only the Arch and Void backends have been tested so far.\n\nContinue anyway?" 12 70 || exit 0
+			dlg --title "Experimental" --defaultno --yesno "The $OS_NAME backend is experimental and untested.\n\nThe installation may fail or leave an unbootable system. Only the Arch and Void backends have been fully tested so far.\n\nContinue anyway?" 12 70 || exit 0
 		fi ;;
 esac
 if [[ -n $ANSWERS ]]; then
@@ -882,7 +899,8 @@ if [[ -n $ANSWERS ]]; then
 	for v in AUTOLOGIN USRKRNL H_STROM H_AKKULOG H_LUEFTER H_EGPU H_NIRI; do [[ -z ${!v:-} || ${!v} == [01] ]] || bad+=" $v=${!v}"; done
 	[[ -z $bad ]] || { echo "--answers: only 0 or 1 (or empty) allowed:$bad" >&2; exit 1; }
 	case ${PROFILE:-minimal} in minimal|desktop) ;; *) echo "--answers: PROFILE=$PROFILE: minimal or desktop" >&2; exit 1 ;; esac
-	if [[ $OS != arch ]] && ((${#EXTRA_AUR[@]})); then log "--answers: EXTRA_AUR ignored (AUR only on Arch)"; EXTRA_AUR=(); fi
+	if ((!OS_AUR && ${#EXTRA_AUR[@]})); then log "--answers: EXTRA_AUR ignored (AUR only on Arch and UsrsideOS)"; EXTRA_AUR=(); fi
+	if declare -F os_answers >/dev/null; then os_answers || exit 1; fi
 	apply_profile "${PROFILE:-minimal}" fill
 	resolve_options
 	[[ -z $CONFLICT ]] || { log "--answers: $CONFLICT"; echo "--answers: $CONFLICT" >&2; exit 1; }
@@ -893,6 +911,7 @@ if [[ -n $ANSWERS ]]; then
 	[[ -z $p ]] || { log "--answers: DISK rejected: $p"; echo "--answers: DISK rejected: $p" >&2; exit 1; }
 	p=$(fs_check)
 	[[ -z $p ]] || { log "--answers: $p"; echo "--answers: $p" >&2; exit 1; }
+	if declare -F os_prepare >/dev/null; then os_prepare || exit 1; fi
 	set +e; install_all >/dev/null; st=$?; set -e
 	if ((st)); then echo "Installation aborted: $(cat "$ERRFILE" 2>/dev/null) (log: $LOG)" >&2; exit 1; fi
 	finish_msg
@@ -900,6 +919,7 @@ if [[ -n $ANSWERS ]]; then
 fi
 apply_profile minimal force
 main_menu
+if declare -F os_prepare >/dev/null; then os_prepare || exit 1; fi
 set +e
 install_all | dialog --backtitle "$TITLE" --title "Installation" --gauge "Here we go …" 9 70 0
 st=${PIPESTATUS[0]}
