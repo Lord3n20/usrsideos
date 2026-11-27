@@ -87,7 +87,7 @@ usrside_libc_tables() {
 	[[ $LIBC == musl ]] || return 0
 	BASE=(usrside-base usrside-init usrside-busybox usrside-dienste rcyay busybox musl bash filesystem ca-certificates
 		runit s6 s6-linux-init dbus seatd openssh dhcpcd openresolv iwd kbd linux-firmware tzdata dosfstools shadow util-linux)
-	BASE_OPT=(chrony sudo efibootmgr)
+	BASE_OPT=(chrony sudo efibootmgr)   # without chrony: BusyBox ntpd (os_services)
 	BUILD_PKGS=(gcc make binutils patch fakeroot pkgconf linux-api-headers)
 	CHPASSWD_ARGS="-c sha512"   # BusyBox chpasswd (shadow leaves it out): SHA-512 instead of its DES default
 	KERNEL_PKGS=()
@@ -483,7 +483,15 @@ if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then export XDG
 EOF
 	# sshd, dhcpcd and getty-ttyS0 are on already (usrside-dienste)
 	local s=(dbus iwd seatd)
-	[[ -x $MNT/usr/bin/chronyd ]] && s+=(chronyd)
+	if [[ -x $MNT/usr/bin/chronyd ]]; then s+=(chronyd)
+	elif [[ -x $MNT/usr/bin/busybox ]]; then   # no chrony (musl): BusyBox ntpd
+		usrside_sv ntpd <<'SV'
+#!/bin/sh
+# UsrsideOS installer: time with BusyBox ntpd (no chrony)
+exec busybox ntpd -n -p pool.ntp.org
+SV
+		s+=(ntpd)
+	fi
 	[[ $INIT == busybox ]] || s+=(getty-tty1)
 	os_enable "${s[@]}"
 }
