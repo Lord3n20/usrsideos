@@ -28,7 +28,7 @@
 # os_confirm_service os_freeze_kernel os_finish. Optional: OS_LIKE (ID_LIKE of the new system, default the
 # backend id), OS_AUR=1 (aur: packages possible), OS_INITRAMFS=0 (fallback kernel without initramfs), functions
 # os_answers (check backend keys of the answers file), os_menu_label/os_menu (one more menu entry), os_prepare
-# (runs once before the installation, after answers/menu). An option without packages in PKG/AUR is not offered on that backend. Helpers for backends: log, die (aborts), warn (goes on; shown in
+# (runs once before the installation, after answers/menu), os_offline (no network: 0 = the backend installs offline anyway). An option without packages in PKG/AUR is not offered on that backend. Helpers for backends: log, die (aborts), warn (goes on; shown in
 # the final dialog, for optional parts such as sound).
 set -euo pipefail
 # nothing from the live environment: exported functions (BASH_FUNC_*) and startup files of
@@ -170,6 +170,8 @@ online() {
 	local i h
 	for i in 1 2 3; do
 		for h in kernel.org github.com; do ping -c1 -W3 "$h" >/dev/null 2>&1 && return 0; done
+		# ping may be blocked (NAT, qemu user network): HTTPS as a second try
+		command -v curl >/dev/null && curl -fsS -m 8 -o /dev/null https://kernel.org/ 2>/dev/null && return 0
 		sleep 2
 	done
 	return 1
@@ -178,7 +180,10 @@ online() {
 requirements() {
 	((EUID == 0)) || { echo "Please run as root from the live ISO." >&2; exit 1; }
 	[[ -d /sys/firmware/efi/efivars ]] || { echo "Only UEFI is supported (boot the machine in UEFI mode)." >&2; exit 1; }
-	online || { echo "No internet. Connect first (iwctl / wpa_supplicant / net-setup / setup-interfaces)." >&2; exit 1; }
+	# network is required, unless the backend can install offline (os_offline, e.g. UsrsideOS from its live medium)
+	if ! online && ! { declare -F os_offline >/dev/null && os_offline; }; then
+		echo "No internet. Connect first (iwctl / wpa_supplicant / net-setup / setup-interfaces)." >&2; exit 1
+	fi
 	os_live_tools
 	: >"$LOG"; rm -f "$ERRFILE" "$NOTEFILE" /tmp/usrsideos-no-usrkrnl
 }

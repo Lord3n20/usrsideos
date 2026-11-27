@@ -191,6 +191,14 @@ usrside_mirrorlist() {
 	fi
 }
 
+# no network (install: requirements): fine with the offline mirror of the live medium (first in the mirrorlist)
+USRSIDE_OFFLINE=0
+os_offline() {
+	[[ -d $USRSIDE_QUELLE/usrside/arch ]] && grep -q "^Server *= *file://$USRSIDE_QUELLE/" /etc/pacman.d/mirrorlist 2>/dev/null || return 1
+	USRSIDE_OFFLINE=1
+	echo "No internet: installing offline from the live medium ($USRSIDE_QUELLE); AUR packages that are not on it are skipped." >&2
+}
+
 # network for the AUR (offline from the live medium: AUR packages only from usrside-aur, the rest is skipped)
 usrside_online() {
 	if command -v curl >/dev/null; then curl -fsS -m 10 -o /dev/null https://aur.archlinux.org/rpc/v5/info 2>/dev/null
@@ -230,6 +238,7 @@ os_bootstrap() {
 	local w=/tmp/usrside-install vprov="which" i pkg
 	[[ $PROFIL == minimal ]] && vprov="which coreutils findutils grep sed gawk awk diffutils"
 	log "rcyay --root: ${REPO[*]} (init $INIT, userland $PROFIL)"
+	((USRSIDE_OFFLINE)) && log "offline installation from the live medium ($USRSIDE_QUELLE)"
 	rm -rf "$w"; mkdir -p "$w"
 	usrside_pacman_conf "file://$USRSIDE_REPO" >"$w/pacman.conf"
 	# usr/lib/modules: the DKMS hook of the packages (nvidia-open-dkms …) aborts without it
