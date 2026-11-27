@@ -689,7 +689,8 @@ base_system() {
 	in_target useradd -m -G "$groups" -s /bin/bash "$USERNAME" || die "user could not be created"
 	# shellcheck disable=SC2086  # CHPASSWD_ARGS: backend options (BusyBox chpasswd: -c sha512)
 	printf '%s:%s\n' "$USERNAME" "$PASSWORD" | os_chroot chpasswd ${CHPASSWD_ARGS:-}
-	in_target passwd -l root   # root locked without password, sudo via wheel
+	# root locked without password, sudo via wheel (BusyBox passwd -l fails when it is locked already)
+	in_target passwd -l root || grep -q '^root:[!*]' "$MNT/etc/shadow" || die "root could not be locked"
 	if [[ -n $TEST_SSH_KEY ]]; then   # test mode: key login for root and the user
 		in_target usermod -p '*' root
 		local d
