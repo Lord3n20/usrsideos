@@ -199,6 +199,25 @@ os_offline() {
 	echo "No internet: installing offline from the live medium ($USRSIDE_QUELLE); AUR packages that are not on it are skipped." >&2
 }
 
+# offline: packages that the medium's mirror lacks are left out with a note (base packages: abort)
+# $@ = pacman command for the target (config, root); changes REPO
+usrside_offline_filter() {
+	# the sync databases of the medium are the full Arch ones: check that the package files really lie on it
+	local miss=() keep=() deps=() n l p b
+	while read -r n l; do
+		[[ $l == file://* && ! -e ${l#file://} ]] && miss+=("$n")
+	done < <(LC_ALL=C "$@" -Sp --print-format '%n %l' "${REPO[@]}" 2>>"$LOG")
+	((${#miss[@]})) || return 0
+	for p in "${miss[@]}"; do
+		for b in "${BASE[@]}"; do [[ $p == "$b" ]] && die "base package $p is not on the live medium (offline mirror incomplete)"; done
+		[[ " ${REPO[*]} " == *" $p "* ]] || deps+=("$p")
+	done
+	((${#deps[@]})) && die "offline: dependencies missing on the live medium: ${deps[*]}"
+	for p in "${REPO[@]}"; do [[ " ${miss[*]} " == *" $p "* ]] || keep+=("$p"); done
+	REPO=("${keep[@]}")
+	warn "offline: not on the live medium, left out: ${miss[*]} (later: rcyay -S ${miss[*]})"
+}
+
 # network for the AUR (offline from the live medium: AUR packages only from usrside-aur, the rest is skipped)
 usrside_online() {
 	if command -v curl >/dev/null; then curl -fsS -m 10 -o /dev/null https://aur.archlinux.org/rpc/v5/info 2>/dev/null
@@ -257,6 +276,7 @@ os_bootstrap() {
 	local P=(pacman --config "$w/pacman.conf" -r "$MNT" --cachedir "$MNT/var/cache/pacman/pkg" --noconfirm)
 	local RC=(rcyay --config "$w/pacman.conf" --root "$MNT" --rcyayconf "$w/rcyay.conf" --noconfirm)
 	"${P[@]}" -Sy >>"$LOG" 2>&1 || die "pacman -Sy failed (network/mirrors? see $LOG)"
+	((USRSIDE_OFFLINE)) && usrside_offline_filter "${P[@]}"
 	if [[ $PROFIL == minimal ]]; then
 		# usrside-provides first, so that pacman does not pull in the GNU tools at all
 		"${P[@]}" -S --needed filesystem >>"$LOG" 2>&1 || die "filesystem could not be installed"
