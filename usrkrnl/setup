@@ -21,6 +21,7 @@ for d in /usr/local/sbin /usr/sbin /sbin; do [[ :$PATH: == *:$d:* ]] || PATH=$PA
 trap 'echo "usrkrnl/setup: unexpected error in line $LINENO: $BASH_COMMAND" >&2' ERR
 
 KVER=7.3.5
+KSUM=8f293f83d54f0b7b9be56863ebc5e4ea79d73e530b4ae55c572be97ef39f0990   # sha256 of linux-$KVER.tar.xz (kernel.org), for offline installs
 SELF=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 SRC=${USRKRNL_SRC:-$HOME/.local/src/usrkrnl}
 TREE=""
@@ -129,12 +130,17 @@ if [[ -z $TREE ]]; then
 		msg "Downloading Linux $KVER to $SRC"
 		mkdir -p "$SRC"
 		rm -rf "$TREE"
-		curl -fL $([[ -t 2 ]] && echo --progress-bar || echo -sS) -o "$SRC/linux-$KVER.tar.xz" "$url/linux-$KVER.tar.xz" || die "download failed"
-		sum=$(curl -sSfL "$url/sha256sums.asc" | awk '$2 == f' f="linux-$KVER.tar.xz") ||
-			die "checksum list not available"
+		# a tarball already in $SRC (e.g. copied from the UsrsideOS live medium by the installer) is used offline
+		if [[ -s $SRC/linux-$KVER.tar.xz ]]; then
+			msg "Using $SRC/linux-$KVER.tar.xz (no download)"
+		else
+			curl -fL $([[ -t 2 ]] && echo --progress-bar || echo -sS) -o "$SRC/linux-$KVER.tar.xz" "$url/linux-$KVER.tar.xz" || die "download failed"
+		fi
+		sum=$(curl -sSfL "$url/sha256sums.asc" 2>/dev/null | awk '$2 == f' f="linux-$KVER.tar.xz") || sum=""
+		[[ -n $sum || -z $KSUM ]] || sum="$KSUM  linux-$KVER.tar.xz"
 		[[ -n $sum ]] || die "no checksum for linux-$KVER.tar.xz on kernel.org"
 		# no --quiet: BusyBox sha256sum (Alpine) does not know it
-		(cd "$SRC" && sha256sum -c <<<"$sum" >/dev/null) || die "checksum mismatch, linux-$KVER.tar.xz is broken"
+		(cd "$SRC" && sha256sum -c <<<"$sum" >/dev/null) || { rm -f "$SRC/linux-$KVER.tar.xz"; die "checksum mismatch, linux-$KVER.tar.xz is broken (removed)"; }
 		tar -xf "$SRC/linux-$KVER.tar.xz" -C "$SRC"
 		rm -f "$SRC/linux-$KVER.tar.xz"
 		for p in "$SELF"/patches/*.patch; do

@@ -451,6 +451,15 @@ os_kernel_hook() {
 	log "fallback kernel: $k ($r) as /boot/vmlinuz-live"
 	# a built-in cmdline of the live kernel may carry rootflags=subvol=@ (rcyay images); empty = none
 	[[ $ROOT_CMDLINE == *rootflags=* ]] || ROOT_CMDLINE+=" rootflags="
+	# usrkrnl offline: the Linux source of the live medium (usrside/quellen/linux-KVER.tar.xz) instead of kernel.org
+	local kv t d
+	kv=$(sed -n 's/^KVER=//p' "$HERE/usrkrnl/setup" | head -n1)
+	t=$USRSIDE_QUELLE/usrside/quellen/linux-$kv.tar.xz
+	if [[ ${USRKRNL:-0} == 1 && -n $kv && -s $t ]]; then
+		d=$MNT/home/$USERNAME/.local/src/usrkrnl
+		mkdir -p "$d" && cp "$t" "$d/" && chroot_run chown -R "$USERNAME:" "/home/$USERNAME/.local" \
+			&& log "usrkrnl: Linux $kv from the medium ($t)" || warn "usrkrnl: copying $t failed (download instead)"
+	fi
 }
 
 os_freeze_kernel() { :; }   # the live kernel copy belongs to no package, nothing updates it
