@@ -399,6 +399,8 @@ fi
 cmd+="${args[*]:+ ${args[*]}}"
 kconf --set-str CMDLINE "$cmd"
 msg "Built-in command line: $cmd"
+# no built-in initramfs either: a base config of a live kernel (UsrsideOS ISO) names its cpio, which is not here
+kconf --set-str INITRAMFS_SOURCE ""
 
 # ---------------------------------------------------------------- 7. known pitfalls
 # iwd uses the kernel crypto API via AF_ALG; localmodconfig does not see those.
