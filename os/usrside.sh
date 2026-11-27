@@ -480,6 +480,15 @@ EOF
 if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then export XDG_RUNTIME_DIR="/run/user/$(id -u)"; fi
 EOF
 	# sshd, dhcpcd and getty-ttyS0 are on already (usrside-dienste)
+	# iwd without systemd unit (musl package): own service, after the system bus
+	if [[ ! -e $MNT/usr/lib/systemd/system/iwd.service && ! -e $MNT/etc/sv/iwd/run ]]; then
+		usrside_sv iwd <<'SV'
+#!/bin/sh
+# UsrsideOS installer: iwd without systemd unit (needs the D-Bus system bus)
+[ -S /run/dbus/system_bus_socket ] || { sleep 1; exit 1; }
+exec /usr/lib/iwd/iwd
+SV
+	fi
 	local s=(dbus iwd seatd)
 	if [[ -x $MNT/usr/bin/chronyd ]]; then s+=(chronyd)
 	elif [[ -x $MNT/usr/bin/busybox ]]; then   # no chrony (musl): BusyBox ntpd
