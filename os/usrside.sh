@@ -349,9 +349,9 @@ usrside_bootstrap_musl() {
 
 os_bootstrap() {
 	if [[ $LIBC == musl ]]; then usrside_bootstrap_musl; return; fi
-	# minimal: the GNU tools stay during the installation and are only replaced by BusyBox at the end (os_finish):
-	# package hooks (update-ca-trust: ln -r) and fakeroot (AUR builds; the BusyBox of Arch is static, LD_PRELOAD
-	# cannot reach it) need them
+	# minimal: the GNU tools stay during the installation and are only replaced by BusyBox at the end (os_finish).
+	# Needed with the static BusyBox of Arch (no ln -r for update-ca-trust, LD_PRELOAD of fakeroot cannot reach it);
+	# with the dynamic BusyBox of usrside (>= 1.36.1-6) it is only a safe order
 	local w=/tmp/usrside-install vprov="which" i pkg
 	log "rcyay --root: ${REPO[*]} (init $INIT, userland $PROFIL)"
 	((USRSIDE_OFFLINE)) && log "offline installation from the live medium ($USRSIDE_QUELLE)"
@@ -651,7 +651,10 @@ EOF
 os_finish() {
 	if [[ $LIBC != musl && $PROFIL == minimal ]]; then   # last step: BusyBox instead of the GNU tools
 		if rc_target --provides apply >>"$LOG" 2>&1; then
-			opt_on yay && warn "userland minimal: AUR builds need the GNU tools again (fakeroot cannot intercept the static BusyBox): rcyay -S coreutils before, rcyay --provides apply after"
+			# only a static BusyBox (Arch package) escapes fakeroot; the dynamic one of usrside (>= 1.36.1-6) does not
+			if opt_on yay && ! LC_ALL=C grep -q 'ld-linux-x86-64' "$MNT/usr/bin/busybox"; then
+				warn "userland minimal: AUR builds need the GNU tools again (fakeroot cannot intercept the static BusyBox): rcyay -S coreutils before, rcyay --provides apply after"
+			fi
 		else warn "userland minimal: rcyay --provides apply failed, the GNU tools stay (see the log)"; fi
 	fi
 	rm -f "$MNT/etc/resolv.conf"
