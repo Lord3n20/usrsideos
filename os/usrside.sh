@@ -299,9 +299,8 @@ EOF
 :
 EOF
 	install -Dm644 /dev/stdin "$MNT/etc/usrside/start.d/30-xdg-runtime.sh" <<'EOF'
-# UsrsideOS installer: XDG_RUNTIME_DIR without logind (/run/user/UID for every normal user), utmp (who, login)
-# (systemd-tmpfiles of usrside-udev runs with -E and skips /run)
-[ -e /run/utmp ] || { : >/run/utmp; chgrp utmp /run/utmp; chmod 664 /run/utmp; }
+# UsrsideOS installer: XDG_RUNTIME_DIR without logind (/run/user/UID for every normal user)
+# (/run/utmp comes from systemd-tmpfiles in usrside-udev >= 2026.11.26-2)
 mkdir -p -m 755 /run/user
 awk -F: '$3 >= 1000 && $3 < 60000 { print $1, $3 }' /etc/passwd | while read -r u id; do
 	mkdir -p -m 700 "/run/user/$id" && chown "$u:" "/run/user/$id"
