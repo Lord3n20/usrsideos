@@ -689,10 +689,11 @@ base_system() {
 	in_target useradd -m -G "$groups" -s /bin/bash "$USERNAME" || die "user could not be created"
 	# shellcheck disable=SC2086  # CHPASSWD_ARGS: backend options (BusyBox chpasswd: -c sha512)
 	printf '%s:%s\n' "$USERNAME" "$PASSWORD" | os_chroot chpasswd ${CHPASSWD_ARGS:-}
-	# root locked without password, sudo via wheel (BusyBox passwd -l fails when it is locked already)
-	in_target passwd -l root || grep -q '^root:[!*]' "$MNT/etc/shadow" || die "root could not be locked"
+	# root without password ("*"), sudo via wheel. Not "!" (passwd -l): OpenSSH without PAM (musl) then refuses
+	# even key logins for root. The installer has no root password, so this always applies.
+	sed -i 's/^root:[^:]*:/root:*:/' "$MNT/etc/shadow"
+	grep -q '^root:\*:' "$MNT/etc/shadow" || die "root password field could not be set"
 	if [[ -n $TEST_SSH_KEY ]]; then   # test mode: key login for root and the user
-		in_target usermod -p '*' root
 		local d
 		for d in /root "/home/$USERNAME"; do
 			mkdir -p "$MNT$d/.ssh"; echo "$TEST_SSH_KEY" >"$MNT$d/.ssh/authorized_keys"
