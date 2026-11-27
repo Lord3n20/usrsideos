@@ -25,6 +25,9 @@ SESSION_CMD="exec niri-session"   # set per init in os_prepare
 IWD_DNS=resolvconf
 USRSIDE_REPO=/srv/usrside     # repository [usrside] of the live system (file:// server)
 USRSIDE_INITS=/usr/share/usrside/inits
+# live ISO (rcyay M7, bootstrap/iso): the medium; offline mirror usrside/arch/$repo (first in the live mirrorlist),
+# finished AUR packages in usrside/repo/usrside-aur, the musl repository in usrside/repo/usrside-musl
+USRSIDE_QUELLE=${USRSIDE_QUELLE:-/run/usrside/quelle}
 
 INIT=runit
 LIBC=glibc
@@ -177,6 +180,45 @@ Include = /etc/pacman.d/mirrorlist
 EOF
 }
 
+# mirrorlist of the live system for the target, without the server lines of the live medium (file://…quelle)
+usrside_mirrorlist() {
+	local m=/etc/pacman.d/mirrorlist
+	grep -q '^Server' "$m" 2>/dev/null || return 0
+	if grep '^Server' "$m" | grep -vqF "file://$USRSIDE_QUELLE"; then
+		grep -vE "^Server *= *file://$USRSIDE_QUELLE" "$m" >"$MNT/etc/pacman.d/mirrorlist"
+	else
+		warn "the live mirrorlist only names the medium; set servers in /etc/pacman.d/mirrorlist of the new system"
+	fi
+}
+
+# network for the AUR (offline from the live medium: AUR packages only from usrside-aur, the rest is skipped)
+usrside_online() {
+	if command -v curl >/dev/null; then curl -fsS -m 10 -o /dev/null https://aur.archlinux.org/rpc/v5/info 2>/dev/null
+	else wget -q -T 10 -O /dev/null https://aur.archlinux.org/rpc/v5/info 2>/dev/null; fi
+}
+
+# AUR packages that lie finished on the live medium (repository usrside-aur): installed with rcyay --root from
+# the live system (dependencies from the offline mirror); the repository never enters the target's pacman.conf
+# $@ = packages; AUR_REST = those that are not on the medium
+usrside_aur_medium() {
+	local d=$USRSIDE_QUELLE/usrside/repo/usrside-aur w=/tmp/usrside-install conf have=() p
+	AUR_REST=("$@")
+	[[ -e $d/usrside-aur.db ]] || return 0
+	mkdir -p "$w"; conf=$w/pacman-aur.conf
+	{ usrside_pacman_conf "file://$USRSIDE_REPO"; printf '\n[usrside-aur]\nSigLevel = Optional TrustAll\nServer = file://%s\n' "$d"; } >"$conf"
+	pacman --config "$conf" -r "$MNT" -Sy >>"$LOG" 2>&1 || { warn "repository usrside-aur on the medium unreadable"; return 0; }
+	local list; list=$(pacman --config "$conf" -r "$MNT" -Slq usrside-aur 2>>"$LOG")
+	AUR_REST=()
+	for p; do if grep -qxF "$p" <<<"$list"; then have+=("$p"); else AUR_REST+=("$p"); fi; done
+	if ((${#have[@]})); then
+		log "AUR packages from the medium (usrside-aur): ${have[*]}"
+		rcyay --config "$conf" --root "$MNT" --rcyayconf "$MNT/etc/rcyay.conf" --noconfirm --repo \
+			--cachedir "$MNT/var/cache/pacman/pkg" -S --needed "${have[@]}" >>"$LOG" 2>&1 \
+			|| die "AUR packages from the medium failed (${have[*]})"
+	fi
+	rm -f "$MNT"/var/lib/pacman/sync/usrside-aur.{db,files}
+}
+
 usrside_conf_set() {   # KEY VALUE FILE (rcyay.conf, [options])
 	if grep -q "^#\?$1 *=" "$3"; then sed -i "0,/^#\?$1 *=.*/s||$1 = $2|" "$3"; else printf '%s = %s\n' "$1" "$2" >>"$3"; fi
 }
@@ -222,7 +264,7 @@ os_bootstrap() {
 
 	# the new system: same repositories, [usrside] as a local copy, own keyring, Init
 	usrside_pacman_conf "file://$USRSIDE_REPO" >"$MNT/etc/pacman.conf"
-	grep -q '^Server' /etc/pacman.d/mirrorlist 2>/dev/null && cp /etc/pacman.d/mirrorlist "$MNT/etc/pacman.d/mirrorlist"
+	usrside_mirrorlist
 	rm -rf "$MNT$USRSIDE_REPO"; cp -a "$USRSIDE_REPO" "$MNT$USRSIDE_REPO"
 	cp "$w/rcyay.conf" "$MNT/etc/rcyay.conf"
 	in_target pacman-key --init || die "pacman-key --init failed"
@@ -384,8 +426,15 @@ os_community() {
 	done
 	aur+=("${EXTRA_AUR[@]}")
 	((${#aur[@]})) || return 0
-	log "AUR packages with rcyay: ${aur[*]}"
-	as_user "rcyay -S --aur --noconfirm --needed --nodiff ${aur[*]}" || die "AUR packages failed (${aur[*]})"
+	usrside_aur_medium "${aur[@]}"; aur=("${AUR_REST[@]}")
+	if ((${#aur[@]})); then
+		if usrside_online; then
+			log "AUR packages with rcyay: ${aur[*]}"
+			as_user "rcyay -S --aur --noconfirm --needed --nodiff ${aur[*]}" || die "AUR packages failed (${aur[*]})"
+		else
+			warn "no network: AUR packages skipped (${aur[*]}); later: rcyay -S --aur ${aur[*]}"
+		fi
+	fi
 	usrside_dkms_add
 }
 

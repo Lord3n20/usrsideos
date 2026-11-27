@@ -202,7 +202,10 @@ system is initialised by the installer. No Flatpak/Snap.
   starts with niri; other services are translated from their systemd units by rcyay.
 - Fallback boot entry "UsrsideOS (live kernel)": the kernel of the live system without initramfs.
   NVIDIA and TUXEDO drivers switch usrkrnl on (their DKMS modules are built against usrkrnl).
-- AUR packages (`aur:`, browser, TUXEDO) are built with rcyay.
+- AUR packages (`aur:`, browser, TUXEDO) are built with rcyay. From the live ISO, packages that lie finished
+  on the medium (repository `usrside-aur` under `/run/usrside/quelle`) are installed from there; without network
+  the rest is skipped with a note. The medium's offline mirror (`file://` lines) is not taken into the
+  mirrorlist of the new system.
 
 ## Limits
 
