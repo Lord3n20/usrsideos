@@ -269,7 +269,7 @@ os_bootstrap() {
 		"${P[@]}" -Syy >>"$LOG" 2>&1 || true
 	done
 	"${RC[@]}" --provides apply >>"$LOG" 2>&1 || die "rcyay --provides apply failed"
-	cp -L /etc/resolv.conf "$MNT/etc/resolv.conf"
+	if [[ -e /etc/resolv.conf ]]; then cp -L /etc/resolv.conf "$MNT/etc/resolv.conf"; else : >"$MNT/etc/resolv.conf"; fi   # offline: none
 
 	# the new system: same repositories, [usrside] as a local copy, own keyring, Init
 	usrside_pacman_conf "file://$USRSIDE_REPO" >"$MNT/etc/pacman.conf"
