@@ -475,6 +475,10 @@ awk -F: '$3 >= 1000 && $3 < 60000 { print $1, $3 }' /etc/passwd | while read -r 
 	mkdir -p -m 700 "/run/user/$id" && chown "$u:" "/run/user/$id"
 done
 EOF
+	# musl: no usrside-udev (systemd-tmpfiles), so utmp from here (who, login records)
+	if [[ $LIBC == musl ]]; then
+		install -Dm644 /dev/stdin "$MNT/etc/usrside/start.d/25-utmp.sh" <<<'[ -e /run/utmp ] || { : >/run/utmp; chgrp utmp /run/utmp 2>/dev/null; chmod 664 /run/utmp; }'
+	fi
 	install -Dm644 /dev/stdin "$MNT/etc/profile.d/usrside-xdg.sh" <<'EOF'
 # UsrsideOS installer: XDG_RUNTIME_DIR without logind (created at boot, /etc/usrside/start.d)
 if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then export XDG_RUNTIME_DIR="/run/user/$(id -u)"; fi
@@ -486,6 +490,8 @@ EOF
 #!/bin/sh
 # UsrsideOS installer: iwd without systemd unit (needs the D-Bus system bus)
 [ -S /run/dbus/system_bus_socket ] || { sleep 1; exit 1; }
+# iwd stops without /dev/rfkill; mdev does not load modules by modalias like udev
+modprobe -q rfkill 2>/dev/null; modprobe -q cfg80211 2>/dev/null
 exec /usr/lib/iwd/iwd
 SV
 	fi
@@ -596,6 +602,12 @@ os_kernel_hook() {
 	[[ -f $k ]] || die "no kernel of the live system in /boot (LIVE_KERNEL=FILE)"
 	cp "$k" "$MNT/boot/vmlinuz-live"
 	if [[ -d /usr/lib/modules/$r ]]; then mkdir -p "$MNT/usr/lib/modules"; cp -a "/usr/lib/modules/$r" "$MNT/usr/lib/modules/"; fi
+	# without kmod (musl: BusyBox modprobe) compressed modules cannot be loaded: unpack them, new modules.dep
+	if [[ -d $MNT/usr/lib/modules/$r && ! -x $MNT/usr/bin/kmod ]] && command -v zstd >/dev/null; then
+		find "$MNT/usr/lib/modules/$r" -name '*.ko.zst' -exec zstd -qd --rm {} + \
+			&& { in_target depmod -a "$r" || warn "depmod $r failed in the new system"; } \
+			|| warn "kernel modules could not be unpacked (BusyBox modprobe cannot load .ko.zst)"
+	fi
 	if [[ -r /proc/config.gz ]]; then zcat /proc/config.gz >"$MNT/boot/config-live"; fi
 	log "fallback kernel: $k ($r) as /boot/vmlinuz-live"
 	# a built-in cmdline of the live kernel may carry rootflags=subvol=@ (rcyay images); empty = none
