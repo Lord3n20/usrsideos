@@ -44,8 +44,11 @@ if [[ ${1:-} == --answers ]]; then ANSWERS=$(readlink -f "${2:?--answers needs a
 # dry run for the live medium (rcyay bootstrap/iso): install --print-packages [OPTION …] prints every package any
 # variant may install ("repo NAME" / "aur NAME"; all inits, all options except the ones named, usrkrnl, both
 # microcode and root fs packages). No root, no network, no disk. Backend: INSTALL_OS (default usrside).
-PRINT=0 PRINT_WITHOUT=""
-if [[ ${1:-} == --print-packages ]]; then PRINT=1; shift; PRINT_WITHOUT=" $* "; LOG=/dev/null; fi
+PRINT=0 PRINT_WITHOUT="" PRINT_SET=()   # KEY=VALUE arguments (e.g. LIBC=musl) are settings, the rest options to leave out
+if [[ ${1:-} == --print-packages ]]; then
+	PRINT=1; shift; LOG=/dev/null
+	for a; do if [[ $a =~ ^[A-Z_]+=[a-z0-9_]*$ ]]; then PRINT_SET+=("$a"); else PRINT_WITHOUT+=" $a "; fi; done
+fi
 
 LIVE_ID=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
 ((PRINT)) && LIVE_ID=${INSTALL_OS:-usrside}
@@ -148,7 +151,8 @@ die()  { log "ERROR: $*"; echo "$*" >"$ERRFILE"; echo "ERROR: $*" >&2; exit 1; }
 warn() { log "WARNING: $*"; echo "$*" >>"$NOTEFILE"; }
 dlg()  { dialog --backtitle "$TITLE" "$@" 3>&1 1>&2 2>&3; }
 in_target() { os_chroot "$@" >>"$LOG" 2>&1; }
-as_user() { os_chroot runuser -l "$USERNAME" -c "$1" >>"$LOG" 2>&1; }
+# runuser (util-linux with PAM); otherwise su (BusyBox, e.g. UsrsideOS musl without PAM)
+as_user() { if [[ -x $MNT/usr/bin/runuser ]]; then os_chroot runuser -l "$USERNAME" -c "$1"; else os_chroot su -l "$USERNAME" -c "$1"; fi >>"$LOG" 2>&1; }
 
 # plain chroot for systems without arch-chroot
 chroot_mount() {
@@ -634,10 +638,13 @@ print_packages() {
 			k=${OPTIONS[i]}; if [[ $PRINT_WITHOUT == *" $k "* ]]; then SEL[$k]=0; else SEL[$k]=1; fi
 		done
 		PROFILE=desktop USRKRNL=1 AUTOLOGIN=1 H_STROM=1 H_AKKULOG=1 H_LUEFTER=1 H_EGPU=1 H_NIRI=1 TEST_SSH_KEY=x
-		if declare -F os_prepare >/dev/null; then os_prepare >&2 || exit 1; fi
+		for a in "${PRINT_SET[@]}"; do declare "${a%%=*}=${a#*=}"; done
+		# a variant the backend rejects (e.g. musl + systemd) is left out
+		if declare -F os_prepare >/dev/null; then os_prepare 2>/dev/null || exit 0; fi
 		repo_list all
+		REPO+=("${BASE_OPT[@]}")
 		# tools the installer itself needs in the live system (os_live_tools)
-		REPO+=(dialog dosfstools btrfs-progs xfsprogs efibootmgr)
+		((${PRINT_LIVE_TOOLS:-1})) && REPO+=(dialog dosfstools btrfs-progs xfsprogs efibootmgr)
 		printf 'repo %s\n' "${REPO[@]}"
 		if ((OS_AUR)) && opt_on yay && declare -p AUR >/dev/null 2>&1; then
 			for k in "${!AUR[@]}"; do
@@ -678,7 +685,7 @@ base_system() {
 		printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 %s\n' "$HOSTNAME_" >>"$MNT/etc/hosts"
 	local groups g
 	# pipefail: the loop must not end with the status of a missing last group
-	groups=$(for g in wheel video input audio seat; do if os_chroot getent group "$g" >/dev/null; then echo "$g"; fi; done | paste -sd,)
+	groups=$(for g in wheel video input audio seat; do if grep -q "^$g:" "$MNT/etc/group"; then echo "$g"; fi; done | paste -sd,)   # no getent: musl has none
 	in_target useradd -m -G "$groups" -s /bin/bash "$USERNAME" || die "user could not be created"
 	printf '%s:%s\n' "$USERNAME" "$PASSWORD" | os_chroot chpasswd
 	in_target passwd -l root   # root locked without password, sudo via wheel
@@ -734,7 +741,7 @@ desktop() {
 			*.zst) zstd -qdc "$src" ;;
 			"") niri_default_config ;;
 			*) cat "$src" ;;
-		esac | sed 's/"alacritty"/"kitty"/g' >"$c"
+		esac | sed "s/\"alacritty\"/\"${TERMINAL_CMD:-kitty}\"/g" >"$c"
 		if [[ -s $c ]]; then
 			niri_config "$c"
 		else

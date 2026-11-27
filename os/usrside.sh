@@ -66,14 +66,47 @@ declare -A PKG=(
 )
 declare -A AUR=( [browser]=ungoogled-chromium-bin [tuxedo]=tuxedo-drivers-dkms )
 
-usrside_init_path() { awk -v i="$1" '$1 == i { print $2; exit }' "$USRSIDE_INITS" 2>/dev/null; }
+usrside_init_path() {
+	if [[ $LIBC == musl ]]; then echo "${MUSL_INITS[$1]:-}"; return; fi
+	awk -v i="$1" '$1 == i { print $2; exit }' "$USRSIDE_INITS" 2>/dev/null
+}
+
+# ---- musl (rcyay M3/M5): own repository usrside-musl (live medium), BusyBox userland, no systemd/AUR/usrkrnl
+# init paths of the musl variant (usrside-musl.inits of the rcyay images; the live system is glibc)
+declare -A MUSL_INITS=([busybox]=/usr/bin/init [runit]=/usr/bin/runit-init [s6]=/etc/s6-linux-init/current/bin/init)
+BASE_OPT=()   # base packages taken when the repository has them (musl: chrony, sudo, efibootmgr)
+usrside_musl_repo() {   # directory of the musl repository: medium, or /srv/usrside-musl
+	local d
+	for d in "${USRSIDE_MUSL_REPO:-}" "$USRSIDE_QUELLE/usrside/repo/usrside-musl" /srv/usrside-musl; do
+		[[ -n $d && -e $d/usrside-musl.db ]] && { echo "$d"; return 0; }
+	done
+	return 1
+}
+# package tables for LIBC=musl (only what the musl repository has; options without packages drop out)
+usrside_libc_tables() {
+	[[ $LIBC == musl ]] || return 0
+	BASE=(usrside-base usrside-init usrside-busybox usrside-dienste rcyay busybox musl bash filesystem ca-certificates
+		runit s6 s6-linux-init dbus seatd openssh dhcpcd openresolv iwd kbd linux-firmware tzdata dosfstools shadow util-linux)
+	BASE_OPT=(chrony sudo efibootmgr)
+	BUILD_PKGS=(gcc make binutils patch fakeroot pkgconf)
+	KERNEL_PKGS=()
+	FS_PKG_btrfs=btrfs-progs FS_PKG_xfs="" UCODE_INTEL="" UCODE_AMD=""
+	TERMINAL_CMD=foot PRINT_LIVE_TOOLS=0 OS_AUR=0
+	AUR=()
+	# pipewire provides the pulse layer itself
+	PKG=([desktop]="niri foot xwayland-satellite ttf-dejavu mesa adwaita-cursors wl-clipboard"
+		[sound]="pipewire wireplumber" [ssh]=openssh [fish]=fish)
+}
 
 # prints what is wrong with INIT/LIBC/PROFIL (empty = fine)
 usrside_problem() {
 	case $INIT in systemd|busybox|runit|s6) ;; *) echo "INIT=$INIT: systemd, busybox, runit or s6"; return ;; esac
 	case $LIBC in
 		glibc) ;;
-		musl) echo "LIBC=musl: the musl variant of UsrsideOS is not available yet (rcyay M3), use glibc"; return ;;
+		musl)
+			[[ $INIT != systemd ]] || { echo "LIBC=musl: no systemd, choose runit, s6 or busybox"; return; }
+			[[ ${FS:-btrfs} == btrfs ]] || { echo "LIBC=musl: only btrfs as root file system"; return; }
+			((PRINT)) || usrside_musl_repo >/dev/null || { echo "LIBC=musl: no musl repository on the live medium ($USRSIDE_QUELLE/usrside/repo/usrside-musl)"; return; } ;;
 		*) echo "LIBC=$LIBC: glibc or musl"; return ;;
 	esac
 	case $PROFIL in standard|minimal) ;; *) echo "PROFIL=$PROFIL: standard or minimal"; return ;; esac
@@ -81,6 +114,7 @@ usrside_problem() {
 }
 
 os_answers() {
+	usrside_libc_tables
 	local p; p=$(usrside_problem)
 	[[ -z $p ]] && return 0
 	log "--answers: $p"; echo "--answers: $p" >&2; return 1
@@ -99,24 +133,30 @@ os_menu() {
 		minimal "BusyBox instead of the GNU tools (some package scripts may fail)") && PROFIL=$v
 	v=$(dlg --title "libc" --default-item "$LIBC" --menu "C library" 10 78 2 \
 		glibc "glibc (Arch binary packages, NVIDIA, Steam)" \
-		musl "musl (not available yet)") && LIBC=$v
+		musl "musl (BusyBox userland, niri + foot; no systemd, AUR, NVIDIA)") && LIBC=$v
 	local p; p=$(usrside_problem)
 	[[ -z $p ]] || { dlg --msgbox "$p" 8 70; LIBC=glibc; }
+	if [[ $LIBC == musl ]]; then usrside_libc_tables; local k; for k in "${!SEL[@]}"; do opt_avail "$k" || SEL[$k]=0; done; fi
 	return 0
 }
 
 # once before the installation: everything that depends on INIT and the selection
 os_prepare() {
-	local p ip
+	local p ip k
+	usrside_libc_tables
 	p=$(usrside_problem)
 	[[ -z $p ]] || { echo "$p" >&2; return 1; }
+	if [[ $LIBC == musl ]]; then
+		for k in "${!SEL[@]}"; do opt_avail "$k" || SEL[$k]=0; done
+		USRKRNL=0   # no clang/kernel build tools in the musl repository; the live kernel is the kernel
+	fi
 	if [[ $INIT == systemd ]]; then
 		SESSION_CMD="exec niri-session"
 		POLKIT_SPAWN='"systemctl" "--user" "start" "hyprpolkitagent"'
 	else
 		# no logind: libseat talks to seatd, a session bus from dbus-run-session
 		SESSION_CMD="export LIBSEAT_BACKEND=seatd; exec dbus-run-session niri --session"
-		PKG[polkit]=polkit-gnome   # hyprpolkitagent needs systemd --user
+		[[ $LIBC == musl ]] || PKG[polkit]=polkit-gnome   # hyprpolkitagent needs systemd --user
 		POLKIT_SPAWN='"/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1"'
 	fi
 	# the live kernel has no headers: DKMS modules only work with usrkrnl
@@ -194,7 +234,8 @@ usrside_mirrorlist() {
 # no network (install: requirements): fine with the offline mirror of the live medium (first in the mirrorlist)
 USRSIDE_OFFLINE=0
 os_offline() {
-	[[ -d $USRSIDE_QUELLE/usrside/arch ]] && grep -q "^Server *= *file://$USRSIDE_QUELLE/" /etc/pacman.d/mirrorlist 2>/dev/null || return 1
+	{ [[ -d $USRSIDE_QUELLE/usrside/arch ]] && grep -q "^Server *= *file://$USRSIDE_QUELLE/" /etc/pacman.d/mirrorlist 2>/dev/null; } \
+		|| usrside_musl_repo >/dev/null || return 1
 	USRSIDE_OFFLINE=1
 	echo "No internet: installing offline from the live medium ($USRSIDE_QUELLE); AUR packages that are not on it are skipped." >&2
 }
@@ -253,7 +294,60 @@ usrside_conf_set() {   # KEY VALUE FILE (rcyay.conf, [options])
 # rcyay for the target, with its own rcyay.conf (Init, VirtualProvides)
 rc_target() { rcyay --root "$MNT" --config "$MNT/etc/pacman.conf" --rcyayconf "$MNT/etc/rcyay.conf" --noconfirm "$@"; }
 
+usrside_musl_pacman_conf() {   # $1 = server of [usrside-musl]
+	cat <<EOF
+# /etc/pacman.conf – UsrsideOS musl (installer, like rcyay bootstrap/pakete/rcyay)
+[options]
+HoldPkg     = rcyay musl
+Architecture = x86_64_musl
+CheckSpace
+ParallelDownloads = 5
+SigLevel    = Required DatabaseOptional
+LocalFileSigLevel = Optional
+
+[usrside-musl]
+SigLevel = Never
+Server = $1
+EOF
+}
+
+usrside_bootstrap_musl() {
+	local w=/tmp/usrside-install d pkg p g
+	d=$(usrside_musl_repo) || die "no musl repository on the live medium"
+	log "rcyay --root (musl, $d): ${REPO[*]} (init $INIT)"
+	rm -rf "$w"; mkdir -p "$w"
+	usrside_musl_pacman_conf "file://$d" >"$w/pacman.conf"
+	mkdir -p "$MNT"/{etc,var/lib/pacman,var/cache/pacman/pkg,srv,tmp}
+	chmod 1777 "$MNT/tmp"
+	chroot_mount
+	rm -f "$MNT/etc/resolv.conf"
+	pkg=$(ls "$d"/usrside-init-[0-9]*.pkg.tar.* 2>/dev/null | grep -v '\.sig$' | tail -n1)
+	[[ -n $pkg ]] || die "usrside-init missing in $d"
+	bsdtar -xOf "$pkg" etc/rcyay.conf >"$w/rcyay.conf" || die "no etc/rcyay.conf in $pkg"
+	usrside_conf_set Init "$INIT" "$w/rcyay.conf"
+	for p in "${BASE_OPT[@]}"; do compgen -G "$d/$p-[0-9]*.pkg.tar.*" >/dev/null && REPO+=("$p"); done
+	local P=(pacman --config "$w/pacman.conf" -r "$MNT" --cachedir "$MNT/var/cache/pacman/pkg" --noconfirm)
+	local RC=(rcyay --config "$w/pacman.conf" --root "$MNT" --rcyayconf "$w/rcyay.conf" --noconfirm)
+	"${P[@]}" -Sy >>"$LOG" 2>&1 || die "pacman -Sy (musl repository) failed, see $LOG"
+	usrside_offline_filter "${P[@]}"
+	"${RC[@]}" --repo --cachedir "$MNT/var/cache/pacman/pkg" -S --needed "${REPO[@]}" >>"$LOG" 2>&1 \
+		|| die "rcyay -S (musl) failed, see $LOG"
+	if [[ -e /etc/resolv.conf ]]; then cp -L /etc/resolv.conf "$MNT/etc/resolv.conf"; else : >"$MNT/etc/resolv.conf"; fi
+	# the new system: its own copy of the repository, no keyring (the repository is unsigned)
+	usrside_musl_pacman_conf "file:///srv/usrside-musl" >"$MNT/etc/pacman.conf"
+	rm -rf "$MNT/srv/usrside-musl"; cp -a "$d" "$MNT/srv/usrside-musl"
+	cp "$w/rcyay.conf" "$MNT/etc/rcyay.conf"
+	# groups that sysusers creates on glibc (no systemd hooks here)
+	for g in wheel video input audio seat; do
+		grep -q "^$g:" "$MNT/etc/group" || in_target groupadd -r "$g" || warn "group $g could not be created"
+	done
+	rc_target --init "$INIT" >>"$LOG" 2>&1 || warn "rcyay --init $INIT reported problems (see the log)"
+	grep -q "^Init *= *$INIT\$" "$MNT/etc/rcyay.conf" || die "Init = $INIT not in /etc/rcyay.conf"
+	[[ -x $MNT${MUSL_INITS[$INIT]} ]] || die "init ${MUSL_INITS[$INIT]} missing in the new system"
+}
+
 os_bootstrap() {
+	if [[ $LIBC == musl ]]; then usrside_bootstrap_musl; return; fi
 	local w=/tmp/usrside-install vprov="which" i pkg
 	[[ $PROFIL == minimal ]] && vprov="which coreutils findutils grep sed gawk awk diffutils"
 	log "rcyay --root: ${REPO[*]} (init $INIT, userland $PROFIL)"
@@ -306,6 +400,11 @@ os_bootstrap() {
 }
 
 os_locale() {
+	if [[ $LIBC == musl ]]; then   # musl: no locale-gen, LANG is enough
+		echo "LANG=$LOCALE" >"$MNT/etc/locale.conf"; echo "KEYMAP=$KEYMAP" >"$MNT/etc/vconsole.conf"; echo "$HOSTNAME_" >"$MNT/etc/hostname"
+		install -Dm644 /dev/stdin "$MNT/etc/usrside/start.d/20-keymap.sh" <<<"loadkeys -q $KEYMAP 2>/dev/null || :"
+		return 0
+	fi
 	sed -i "s/^#\($LOCALE \)/\1/; s/^#\(en_US.UTF-8 \)/\1/" "$MNT/etc/locale.gen"
 	in_target locale-gen
 	echo "LANG=$LOCALE" >"$MNT/etc/locale.conf"
@@ -382,7 +481,8 @@ EOF
 if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then export XDG_RUNTIME_DIR="/run/user/$(id -u)"; fi
 EOF
 	# sshd, dhcpcd and getty-ttyS0 are on already (usrside-dienste)
-	local s=(dbus iwd chronyd seatd)
+	local s=(dbus iwd seatd)
+	[[ -x $MNT/usr/bin/chronyd ]] && s+=(chronyd)
 	[[ $INIT == busybox ]] || s+=(getty-tty1)
 	os_enable "${s[@]}"
 }
@@ -421,6 +521,10 @@ EOF
 
 # systemd: user socket (like Arch); otherwise started with the niri session (like Void), autospawn without niri
 os_sound() {
+	if [[ $LIBC == musl ]]; then   # PipeWire (with its pulse layer) instead of PulseAudio, started by niri
+		[[ -z $1 ]] || printf 'spawn-at-startup "pipewire"\nspawn-at-startup "wireplumber"\nspawn-at-startup "pipewire-pulse"\n' >>"$1"
+		return 0
+	fi
 	if [[ $INIT == systemd ]]; then
 		in_target systemctl --global enable pulseaudio.socket
 	else

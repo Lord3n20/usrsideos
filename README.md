@@ -195,7 +195,7 @@ system is initialised by the installer. No Flatpak/Snap.
 |---|---|---|
 | `INIT` | `runit`, `s6`, `busybox`, `systemd` (services of all four are installed, `init=` in the boot entries, `Init =` in `/etc/rcyay.conf`; switch later with `rcyay --init NAME`) | `runit` |
 | `PROFIL` | `standard` (GNU tools stay), `minimal` (BusyBox instead of coreutils/findutils/grep/sed/gawk/diffutils) | `standard` |
-| `LIBC` | `glibc`; `musl` once the musl variant exists | `glibc` |
+| `LIBC` | `glibc`; `musl` (repository `usrside-musl` of the live medium: BusyBox userland, niri + foot, PipeWire; no systemd, AUR, usrkrnl/NVIDIA; options without musl packages drop out) | `glibc` |
 
 - Without systemd: seatd (niri with `LIBSEAT_BACKEND=seatd`, the user is in the group `seat`), an own D-Bus
   system bus service, `XDG_RUNTIME_DIR` from `/etc/usrside/start.d`, the polkit agent is polkit-gnome, PulseAudio
