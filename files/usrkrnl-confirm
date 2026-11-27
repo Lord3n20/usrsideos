@@ -5,12 +5,15 @@ set -eu
 case $(uname -r) in *-usr) ;; *) exit 0 ;; esac
 new=$(efibootmgr -v | grep -iF 'EFI\usrkrnl\vmlinuz-usr.efi' | sed -nE 's/^Boot([0-9A-Fa-f]{4}).*/\1/p' | head -n1)
 [ -n "$new" ] || exit 0
+# booted from another entry (fallback kernel that is also an usrkrnl, e.g. the live kernel of UsrsideOS): not confirmed
+cur=$(efibootmgr | sed -n 's/^BootCurrent: *//p')
+[ -z "$cur" ] || [ "$cur" = "$new" ] || exit 0
 old=$(efibootmgr | awk '/^BootOrder/ { print $2 }' | tr ',' '\n' | grep -vix "$new" | paste -sd, -)
 efibootmgr -q -o "$new${old:+,$old}"
 # whatever started this script (systemd, OpenRC local.d, runit rc.local): only once
 if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
 	systemctl disable usrkrnl-confirm.service >/dev/null 2>&1 || true
 fi
-rm -f /etc/local.d/usrkrnl-confirm.start
+rm -f /etc/local.d/usrkrnl-confirm.start /etc/usrside/start.d/90-usrkrnl-confirm.sh
 [ -f /etc/rc.local ] && sed -i '/usrkrnl-confirm/d' /etc/rc.local
 echo "usrkrnl is now the default (Boot$new)."
