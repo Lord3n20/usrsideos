@@ -88,7 +88,8 @@ usrside_libc_tables() {
 	BASE=(usrside-base usrside-init usrside-busybox usrside-dienste rcyay busybox musl bash filesystem ca-certificates
 		runit s6 s6-linux-init dbus seatd openssh dhcpcd openresolv iwd kbd linux-firmware tzdata dosfstools shadow util-linux)
 	BASE_OPT=(chrony sudo efibootmgr)
-	BUILD_PKGS=(gcc make binutils patch fakeroot pkgconf)
+	BUILD_PKGS=(gcc make binutils patch fakeroot pkgconf linux-api-headers)
+	CHPASSWD_ARGS="-c sha512"   # BusyBox chpasswd (shadow leaves it out): SHA-512 instead of its DES default
 	KERNEL_PKGS=()
 	FS_PKG_btrfs=btrfs-progs FS_PKG_xfs="" UCODE_INTEL="" UCODE_AMD=""
 	TERMINAL_CMD=foot PRINT_LIVE_TOOLS=0 OS_AUR=0
