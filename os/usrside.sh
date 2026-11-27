@@ -86,7 +86,7 @@ usrside_musl_repo() {   # directory of the musl repository: medium, or /srv/usrs
 usrside_libc_tables() {
 	[[ $LIBC == musl ]] || return 0
 	BASE=(usrside-base usrside-init usrside-busybox usrside-dienste rcyay busybox musl bash filesystem ca-certificates
-		runit s6 s6-linux-init dbus seatd openssh dhcpcd openresolv iwd kbd linux-firmware tzdata dosfstools shadow util-linux)
+		runit s6 s6-linux-init dbus seatd openssh dhcpcd openresolv iwd kbd kmod linux-firmware tzdata dosfstools shadow util-linux)
 	BASE_OPT=(chrony sudo efibootmgr)   # without chrony: BusyBox ntpd (os_services)
 	BUILD_PKGS=(gcc make binutils patch fakeroot pkgconf linux-api-headers)
 	CHPASSWD_ARGS="-c sha512"   # BusyBox chpasswd (shadow leaves it out): SHA-512 instead of its DES default
