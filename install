@@ -41,13 +41,19 @@ MNT=/mnt
 LOG=/tmp/usrsideos-install.log
 ANSWERS=""
 if [[ ${1:-} == --answers ]]; then ANSWERS=$(readlink -f "${2:?--answers needs a file}"); fi
+# dry run for the live medium (rcyay bootstrap/iso): install --print-packages [OPTION …] prints every package any
+# variant may install ("repo NAME" / "aur NAME"; all inits, all options except the ones named, usrkrnl, both
+# microcode and root fs packages). No root, no network, no disk. Backend: INSTALL_OS (default usrside).
+PRINT=0 PRINT_WITHOUT=""
+if [[ ${1:-} == --print-packages ]]; then PRINT=1; shift; PRINT_WITHOUT=" $* "; LOG=/dev/null; fi
 
 LIVE_ID=$(. /etc/os-release 2>/dev/null; echo "${ID:-}")
+((PRINT)) && LIVE_ID=${INSTALL_OS:-usrside}
 case $LIVE_ID in
 	# pure UsrsideOS (own live system, os/usrside.sh); the glibc images of the rcyay bootstrap still say
 	# ID=arch (Arch filesystem package), they are recognised by the init list and rcyay
 	usrside) OS=usrside ;;
-	arch) if [[ -s /usr/share/usrside/inits ]] && command -v rcyay >/dev/null; then OS=usrside; else OS=arch; fi ;;
+	arch) if ((PRINT)); then OS=arch; elif [[ -s /usr/share/usrside/inits ]] && command -v rcyay >/dev/null; then OS=usrside; else OS=arch; fi ;;
 	void|gentoo|alpine) OS=$LIVE_ID ;;
 	*) echo "Unsupported live system '${LIVE_ID:-unknown}'. Boot the UsrsideOS, Arch, Void, Gentoo or Alpine ISO." >&2; exit 1 ;;
 esac
@@ -594,12 +600,15 @@ partition() {
 	ROOT_CMDLINE="root=PARTUUID=$PARTUUID rw$flags rootfstype=$FS $KERNEL_ARGS"
 }
 
-packages() {
-	local i
+repo_list() {   # sets REPO from the settings; $1 = all: both microcode and root fs packages (--print-packages)
+	local i f
 	local fsp="FS_PKG_$FS"
 	# shellcheck disable=SC2206  # may name several packages
 	REPO=("${BASE[@]}" ${!fsp})
-	if grep -q GenuineIntel /proc/cpuinfo; then [[ -z $UCODE_INTEL ]] || REPO+=("$UCODE_INTEL")
+	if [[ ${1:-} == all ]]; then
+		for f in FS_PKG_btrfs FS_PKG_xfs; do REPO+=(${!f:-}); done
+		REPO+=($UCODE_INTEL $UCODE_AMD)
+	elif grep -q GenuineIntel /proc/cpuinfo; then [[ -z $UCODE_INTEL ]] || REPO+=("$UCODE_INTEL")
 	elif grep -q AuthenticAMD /proc/cpuinfo; then [[ -z $UCODE_AMD ]] || REPO+=("$UCODE_AMD"); fi
 	for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
 		# shellcheck disable=SC2206  # a list of package names
@@ -610,6 +619,39 @@ packages() {
 	((USRKRNL)) && REPO+=("${KERNEL_PKGS[@]}")
 	REPO+=("${EXTRA_REPO[@]}")
 	[[ -z $TEST_SSH_KEY ]] || REPO+=("$SSH_PKG")
+}
+
+print_packages() {
+	local inits=(-) init i k
+	if [[ $OS == usrside ]]; then
+		inits=(systemd busybox runit s6)
+		# outside the live system: init paths only matter for the kernel line
+		[[ -s $USRSIDE_INITS ]] || { USRSIDE_INITS=$(mktemp); printf '%s x\n' "${inits[@]}" >"$USRSIDE_INITS"; }
+	fi
+	for init in "${inits[@]}"; do (
+		[[ $init == - ]] || INIT=$init
+		for ((i = 0; i < ${#OPTIONS[@]}; i += 4)); do
+			k=${OPTIONS[i]}; if [[ $PRINT_WITHOUT == *" $k "* ]]; then SEL[$k]=0; else SEL[$k]=1; fi
+		done
+		PROFILE=desktop USRKRNL=1 AUTOLOGIN=1 H_STROM=1 H_AKKULOG=1 H_LUEFTER=1 H_EGPU=1 H_NIRI=1 TEST_SSH_KEY=x
+		if declare -F os_prepare >/dev/null; then os_prepare >&2 || exit 1; fi
+		repo_list all
+		# tools the installer itself needs in the live system (os_live_tools)
+		REPO+=(dialog dosfstools btrfs-progs xfsprogs efibootmgr)
+		printf 'repo %s\n' "${REPO[@]}"
+		if ((OS_AUR)) && opt_on yay && declare -p AUR >/dev/null 2>&1; then
+			for k in "${!AUR[@]}"; do
+				# shellcheck disable=SC2086  # a list of package names
+				opt_on "$k" && printf 'aur %s\n' ${AUR[$k]}
+			done
+		fi
+		exit 0
+	) || exit 1; done | sort -u
+}
+
+packages() {
+	local i
+	repo_list
 	os_bootstrap
 	local ruuid euuid o s
 	o=$(fs_opts)
@@ -884,6 +926,7 @@ finish_msg() {
 	echo -e "$m"
 }
 
+if ((PRINT)); then set -o pipefail; print_packages; exit; fi
 requirements
 hopd_values
 # backends without a green VM test yet; remove an ID here once its test has passed
