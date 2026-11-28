@@ -185,7 +185,11 @@ Commands: `hopd befehle`; to change settings, edit `/usr/local/src/hopd/config.h
 
 ## Pure UsrsideOS (experimental)
 
-Booted from the UsrsideOS live system (for now a glibc image of the rcyay bootstrap, later the live ISO),
+**Live/installer ISO:** [release v7](https://github.com/Lord3n20/usrsideos/releases/tag/v7) (three parts, join them with
+`cat`, checksums in `SHA256SUMS`). Boot it in UEFI mode (directly or from a Ventoy stick), log in as `root`, connect
+Wi-Fi with `iwctl` if you want AUR packages, then run `usrside-installieren`.
+
+Booted from the UsrsideOS live system (the live ISO above, or a glibc image of the rcyay bootstrap),
 `install` uses the backend `os/usrside.sh`: no Arch ISO, everything comes from the live system (rcyay, pacman,
 the repository `[usrside]` in `/srv/usrside`, the running kernel). Packages are Arch binary packages
 (core/extra/multilib) plus `[usrside]`, installed with `rcyay --root` instead of pacstrap; the keyring of the new
