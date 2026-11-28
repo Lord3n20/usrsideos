@@ -385,8 +385,9 @@ for a in $src_args; do
 	case $a in
 		BOOT_IMAGE=*|initrd=*|root=*|rootfstype=*|rootwait|rw|ro|rd.*|cryptdevice=*) ;;
 		# init= of the running live system is dropped; given with --cmdline it is the init of the new
-		# system (pure UsrsideOS: runit, s6, BusyBox init or systemd)
-		init=*) ((CMDLINE_SET)) && args+=("$a") ;;
+		# system (pure UsrsideOS: runit, s6, BusyBox init or systemd). A rebuild on an installed system
+		# keeps the running init= (without it pure UsrsideOS would boot /sbin/init instead of its init)
+		init=*) { ((CMDLINE_SET)) || [[ ! -d /run/usrside/quelle ]]; } && args+=("$a") ;;
 		*) [[ " ${args[*]} " == *" $a "* ]] || args+=("$a") ;;
 	esac
 done
